@@ -2,8 +2,12 @@ extends CharacterBody3D
 
 const IDLE_ANIMATION := &"Idle"
 const RUN_ANIMATION := &"Running_A"
+const JUMP_START_ANIMATION := &"Jump_Start"
+const JUMP_IDLE_ANIMATION := &"Jump_Idle"
+const JUMP_LAND_ANIMATION := &"Jump_Land"
 
 @export var move_speed: float = 4.0
+@export var jump_velocity: float = 6.0
 @export var acceleration: float = 18.0
 @export var deceleration: float = 22.0
 @export var rotation_speed: float = 10.0
@@ -20,6 +24,8 @@ const RUN_ANIMATION := &"Running_A"
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _is_moving := false
+var _is_jumping := false
+var _is_landing := false
 var _current_animation: StringName = &""
 var _ignore_next_mouse_motion := false
 
@@ -73,10 +79,17 @@ func _physics_process(delta: float) -> void:
 	velocity.x = horizontal_velocity.x
 	velocity.z = horizontal_velocity.z
 
-	if not is_on_floor():
+	var was_on_floor := is_on_floor()
+	if not was_on_floor:
 		velocity.y -= _gravity * delta
 	elif velocity.y < 0.0:
 		velocity.y = -0.1
+
+	if Input.is_action_just_pressed("jump") and was_on_floor:
+		velocity.y = jump_velocity
+		_is_jumping = true
+		_is_landing = false
+		_play_animation(JUMP_START_ANIMATION)
 
 	if move_direction != Vector3.ZERO:
 		var target_yaw := atan2(move_direction.x, move_direction.z)
@@ -93,9 +106,15 @@ func _physics_process(delta: float) -> void:
 	var moving_now := horizontal_velocity.length() > 0.1
 	if moving_now != _is_moving:
 		_is_moving = moving_now
-		_play_animation(RUN_ANIMATION if _is_moving else IDLE_ANIMATION)
+		if not _is_jumping and not _is_landing:
+			_play_animation(RUN_ANIMATION if _is_moving else IDLE_ANIMATION)
 
 	move_and_slide()
+
+	if _is_jumping and not was_on_floor and is_on_floor():
+		_is_jumping = false
+		_is_landing = true
+		_play_animation(JUMP_LAND_ANIMATION)
 
 
 func _play_animation(animation_name: StringName) -> void:
@@ -106,5 +125,17 @@ func _play_animation(animation_name: StringName) -> void:
 
 
 func _on_animation_finished(animation_name: StringName) -> void:
-	if animation_name == _current_animation:
-		animation_player.play(_current_animation)
+	if animation_name != _current_animation:
+		return
+
+	if animation_name == JUMP_START_ANIMATION:
+		if _is_jumping and not is_on_floor():
+			_play_animation(JUMP_IDLE_ANIMATION)
+	elif animation_name == JUMP_IDLE_ANIMATION:
+		if _is_jumping and not is_on_floor():
+			_play_animation(JUMP_IDLE_ANIMATION)
+	elif animation_name == JUMP_LAND_ANIMATION:
+		_is_landing = false
+		_play_animation(RUN_ANIMATION if _is_moving else IDLE_ANIMATION)
+	else:
+		_play_animation(_current_animation)
