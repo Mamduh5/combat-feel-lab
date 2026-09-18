@@ -1,0 +1,42 @@
+# Godot-generated cache and imported resources
+.godot/
+.import/
+
+# C# / Mono-generated files
+.mono/
+data_*/
+mono_crash.*.json
+
+# Local export credentials (may contain signing secrets)
+export_credentials.cfg
+
+# Generated build and export output
+/build/
+/builds/
+/dist/
+/export/
+/exports/
+
+# Android custom-build output and machine-local configuration
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+
+# IDE metadata
+/.idea/
+/.vscode/
+*.suo
+*.user
+*.userprefs
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary and log files
+*.log
+*.tmp
+*.temp
+*~
