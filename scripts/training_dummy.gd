@@ -4,6 +4,10 @@ const IDLE_ANIMATION := &"Idle_A"
 const CHASE_ANIMATION := &"Walking_A"
 const HIT_REACTION_ANIMATION := &"Hit_A"
 const ENEMY_ATTACK_ANIMATION := &"Unarmed_Melee_Attack_Punch_A"
+const ENEMY_ATTACK_2_ANIMATION := &"Unarmed_Melee_Attack_Kick"
+const ENEMY_ATTACK_2_SOURCE_ANIMATION := &"Melee_Unarmed_Attack_Kick"
+const PUNCH_TELEGRAPH_COLOR := Color(1.0, 0.55, 0.05)
+const ATTACK_2_TELEGRAPH_COLOR := Color(1.0, 0.15, 0.1)
 const DEATH_ANIMATION := &"Death_A"
 const GENERAL_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium/Rig_Medium_General.glb")
 const MOVEMENT_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium/Rig_Medium_MovementBasic.glb")
@@ -18,6 +22,11 @@ const ATTACK_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Charac
 @export var attack_cooldown: float = 1.5
 @export var telegraph_duration: float = 0.45
 @export var attack_damage: int = 20
+@export var attack_2_range: float = 1.6
+@export var attack_2_telegraph_duration: float = 0.70
+@export var attack_2_damage: int = 30
+@export_range(0.0, 1.0, 0.01) var attack_2_hit_start: float = 0.45
+@export_range(0.0, 1.0, 0.01) var attack_2_hit_end: float = 0.60
 @export var respawn_delay: float = 2.0
 @export_range(0.0, 1.0, 0.01) var enemy_hit_start: float = 0.30
 @export_range(0.0, 1.0, 0.01) var enemy_hit_end: float = 0.60
@@ -28,12 +37,15 @@ const ATTACK_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Charac
 @onready var target_character: Node3D = $VisualRoot/TargetCharacter
 @onready var target_animation_player: AnimationPlayer = $VisualRoot/TargetAnimationPlayer
 @onready var enemy_attack_hitbox: Area3D = $VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyHandAttachment/EnemyAttackHitbox
+@onready var enemy_attack_2_hitbox: Area3D = $VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyFootAttachment/EnemyAttack2Hitbox
 @onready var player: CharacterBody3D = $"../Player"
 @onready var body_collision: CollisionShape3D = $CollisionShape3D
 @onready var hurtbox: Area3D = $Hurtbox
 
 var current_health: int
 var _enemy_attack_duration := 0.0
+var _enemy_attack_2_duration := 0.0
+var _selected_attack := 1
 var _enemy_attack_elapsed := 0.0
 var _telegraph_elapsed := 0.0
 var _cooldown_remaining := 0.0
@@ -81,20 +93,21 @@ func _physics_process(delta: float) -> void:
 			_process_enemy_attack_hits(delta)
 		elif _is_telegraphing:
 			_stop_horizontal(delta)
-			if not _player_can_be_attacked() or not _is_player_in_range():
+			if not _player_can_be_attacked() or not _is_player_in_selected_attack_range():
 				_cancel_telegraph()
 			else:
 				_telegraph_elapsed += delta
-				if _telegraph_elapsed >= telegraph_duration:
+				if _telegraph_elapsed >= _get_selected_telegraph_duration():
 					_start_enemy_attack()
 		elif not _player_can_be_attacked():
 			_stop_horizontal(delta)
 			if not _is_hit_reacting:
 				_play_idle()
-		elif _cooldown_remaining <= 0.0 and not _is_hit_reacting and _is_player_in_range():
+		elif _cooldown_remaining <= 0.0 and not _is_hit_reacting and _is_player_in_any_attack_range():
 			if _is_player_inside_attack_cone():
 				_stop_horizontal(delta)
-				_start_telegraph()
+				if _select_attack_for_current_distance():
+					_start_telegraph()
 			else:
 				_process_close_range_turn(delta)
 		else:
@@ -182,10 +195,12 @@ func _die() -> void:
 	_enemy_attack_elapsed = 0.0
 	_cooldown_remaining = 0.0
 	_committed_attack_forward = Vector3.ZERO
+	_selected_attack = 1
 	_enemy_hit_target_ids.clear()
 	velocity = Vector3.ZERO
 	telegraph_label.visible = false
 	enemy_attack_hitbox.set_deferred("monitoring", false)
+	enemy_attack_2_hitbox.set_deferred("monitoring", false)
 	target_animation_player.play(DEATH_ANIMATION)
 
 
@@ -216,12 +231,14 @@ func _try_respawn() -> void:
 	_enemy_attack_elapsed = 0.0
 	_cooldown_remaining = 0.0
 	_committed_attack_forward = Vector3.ZERO
+	_selected_attack = 1
 	_enemy_hit_target_ids.clear()
 	telegraph_label.visible = false
 	body_collision.set_deferred("disabled", false)
 	hurtbox.set_deferred("monitoring", true)
 	hurtbox.set_deferred("monitorable", true)
 	enemy_attack_hitbox.set_deferred("monitoring", true)
+	enemy_attack_2_hitbox.set_deferred("monitoring", true)
 	_update_health_label()
 	_play_idle()
 
@@ -243,6 +260,9 @@ func _setup_target_animations() -> void:
 	var attack_animation := attack_player.get_animation("Melee_Unarmed_Attack_Punch_A").duplicate(true) as Animation
 	target_library.add_animation(ENEMY_ATTACK_ANIMATION, attack_animation)
 	_enemy_attack_duration = attack_animation.length
+	var attack_2_animation := attack_player.get_animation(ENEMY_ATTACK_2_SOURCE_ANIMATION).duplicate(true) as Animation
+	target_library.add_animation(ENEMY_ATTACK_2_ANIMATION, attack_2_animation)
+	_enemy_attack_2_duration = attack_2_animation.length
 
 	target_animation_player.add_animation_library(&"", target_library)
 	general_source.free()
@@ -270,6 +290,8 @@ func _start_telegraph() -> void:
 	_committed_attack_forward = _get_attack_forward()
 	_is_telegraphing = true
 	_telegraph_elapsed = 0.0
+	telegraph_label.text = "!!" if _selected_attack == 2 else "!"
+	telegraph_label.modulate = ATTACK_2_TELEGRAPH_COLOR if _selected_attack == 2 else PUNCH_TELEGRAPH_COLOR
 	telegraph_label.visible = true
 	_play_idle()
 
@@ -290,7 +312,7 @@ func _start_enemy_attack() -> void:
 	_is_enemy_attacking = true
 	_enemy_attack_elapsed = 0.0
 	_enemy_hit_target_ids.clear()
-	target_animation_player.play(ENEMY_ATTACK_ANIMATION)
+	target_animation_player.play(_get_selected_attack_animation())
 
 
 func _finish_enemy_attack() -> void:
@@ -305,14 +327,19 @@ func _process_enemy_attack_hits(delta: float) -> void:
 	if _is_dead:
 		return
 	_enemy_attack_elapsed += delta
-	if _enemy_attack_duration <= 0.0:
+	var attack_duration := _get_selected_attack_duration()
+	if attack_duration <= 0.0:
 		return
 
-	var normalized_progress := _enemy_attack_elapsed / _enemy_attack_duration
-	if normalized_progress < enemy_hit_start or normalized_progress > enemy_hit_end:
+	var normalized_progress := _enemy_attack_elapsed / attack_duration
+	var hit_start := attack_2_hit_start if _selected_attack == 2 else enemy_hit_start
+	var hit_end := attack_2_hit_end if _selected_attack == 2 else enemy_hit_end
+	if normalized_progress < hit_start or normalized_progress > hit_end:
 		return
 
-	for hurtbox in enemy_attack_hitbox.get_overlapping_areas():
+	var active_hitbox := enemy_attack_2_hitbox if _selected_attack == 2 else enemy_attack_hitbox
+	var active_damage := attack_2_damage if _selected_attack == 2 else attack_damage
+	for hurtbox in active_hitbox.get_overlapping_areas():
 		var target := hurtbox.get_parent()
 		if target != player or not target.has_method("take_damage"):
 			continue
@@ -320,17 +347,52 @@ func _process_enemy_attack_hits(delta: float) -> void:
 		if _enemy_hit_target_ids.has(target_id):
 			continue
 		_enemy_hit_target_ids[target_id] = true
-		target.take_damage(attack_damage, enemy_attack_hitbox.global_position)
+		target.take_damage(active_damage, active_hitbox.global_position)
+
+
+func _get_selected_attack_animation() -> StringName:
+	return ENEMY_ATTACK_2_ANIMATION if _selected_attack == 2 else ENEMY_ATTACK_ANIMATION
+
+
+func _get_selected_attack_duration() -> float:
+	return _enemy_attack_2_duration if _selected_attack == 2 else _enemy_attack_duration
+
+
+func _get_selected_telegraph_duration() -> float:
+	return attack_2_telegraph_duration if _selected_attack == 2 else telegraph_duration
+
+
+func _get_player_horizontal_distance() -> float:
+	var offset := player.global_position - global_position
+	offset.y = 0.0
+	return offset.length()
+
+
+func _select_attack_for_current_distance() -> bool:
+	var distance := _get_player_horizontal_distance()
+	var punch_is_valid := distance <= attack_range
+	var attack_2_is_valid := distance <= attack_2_range
+	if not punch_is_valid and not attack_2_is_valid:
+		return false
+	if punch_is_valid and attack_2_is_valid:
+		_selected_attack = 1 if randf() < 0.5 else 2
+	else:
+		_selected_attack = 1 if punch_is_valid else 2
+	return true
 
 
 func _player_can_be_attacked() -> bool:
 	return is_instance_valid(player) and int(player.get("current_health")) > 0
 
 
-func _is_player_in_range() -> bool:
-	var offset := player.global_position - global_position
-	offset.y = 0.0
-	return offset.length() <= attack_range
+func _is_player_in_any_attack_range() -> bool:
+	var distance := _get_player_horizontal_distance()
+	return distance <= attack_range or distance <= attack_2_range
+
+
+func _is_player_in_selected_attack_range() -> bool:
+	var selected_range := attack_2_range if _selected_attack == 2 else attack_range
+	return _get_player_horizontal_distance() <= selected_range
 
 
 func _is_player_inside_attack_cone() -> bool:
@@ -384,7 +446,7 @@ func _play_chase() -> void:
 func _on_target_animation_finished(animation_name: StringName) -> void:
 	if animation_name == DEATH_ANIMATION and _is_dead:
 		_finish_death_animation()
-	elif animation_name == ENEMY_ATTACK_ANIMATION and _is_enemy_attacking:
+	elif _is_enemy_attacking and animation_name == _get_selected_attack_animation():
 		_finish_enemy_attack()
 	elif animation_name == HIT_REACTION_ANIMATION:
 		_is_hit_reacting = false

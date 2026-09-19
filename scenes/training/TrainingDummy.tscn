@@ -10,6 +10,9 @@
 [sub_resource type="SphereShape3D" id="SphereShape3D_enemy_fist"]
 radius = 0.28
 
+[sub_resource type="SphereShape3D" id="SphereShape3D_c4shs"]
+radius = 0.4
+
 [node name="TrainingDummy" type="CharacterBody3D" unique_id=2065618547]
 script = ExtResource("1_b05k5")
 
@@ -42,6 +45,18 @@ monitorable = false
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyHandAttachment/EnemyAttackHitbox"]
 shape = SubResource("SphereShape3D_enemy_fist")
+
+[node name="EnemyFootAttachment" type="BoneAttachment3D" parent="VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D"]
+bone_name = "toes.r"
+
+[node name="EnemyAttack2Hitbox" type="Area3D" parent="VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyFootAttachment"]
+collision_layer = 0
+collision_mask = 4
+monitorable = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyFootAttachment/EnemyAttack2Hitbox"]
+position = Vector3(0, 0, -0.15)
+shape = SubResource("SphereShape3D_c4shs")
 
 [node name="Label3D" type="Label3D" parent="." unique_id=1385854300]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.35, 0)
