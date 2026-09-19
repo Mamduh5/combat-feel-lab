@@ -15,6 +15,7 @@ const COMBO_2_ANIMATION := &"1H_Melee_Attack_Slice_Horizontal"
 const COMBO_3_ANIMATION := &"1H_Melee_Attack_Stab"
 const BLOCKING_ANIMATION := &"Blocking"
 const BLOCK_HIT_ANIMATION := &"Block_Hit"
+const HIT_REACTION_ANIMATION := &"Hit_A"
 const DEATH_ANIMATION := &"Death_A"
 const MAX_COMBO_STAGE := 3
 
@@ -43,6 +44,7 @@ const MAX_COMBO_STAGE := 3
 @export var respawn_delay: float = 2.0
 @export_range(0.0, 360.0, 1.0) var block_angle_degrees: float = 120.0
 @export_range(0.06, 0.10, 0.01) var player_hit_flash_duration: float = 0.08
+@export_range(0.05, 1.0, 0.01) var hit_reaction_duration: float = 0.30
 @export_range(0.0, 0.20, 0.01) var hit_stop_duration: float = 0.05
 @export_range(0.0, 1.0, 0.01) var attack_hit_start: float = 0.25
 @export_range(0.0, 1.0, 0.01) var attack_hit_end: float = 0.75
@@ -77,6 +79,7 @@ var _is_dashing := false
 var _is_attacking := false
 var _is_blocking := false
 var _is_block_hit_reacting := false
+var _is_hit_reacting := false
 var _block_press_requires_release := false
 var _stamina_regen_delay_remaining := 0.0
 var _is_dead := false
@@ -137,6 +140,8 @@ func take_damage(amount: int, source_position = null) -> bool:
 		_die()
 	else:
 		_trigger_player_hit_flash()
+		if is_on_floor():
+			_start_hit_reaction()
 	return true
 
 
@@ -162,6 +167,7 @@ func _cancel_combat_and_movement() -> void:
 	_is_attacking = false
 	_is_blocking = false
 	_is_block_hit_reacting = false
+	_is_hit_reacting = false
 	_dash_direction = Vector3.ZERO
 	_dash_speed = 0.0
 	_dash_time_remaining = 0.0
@@ -214,6 +220,49 @@ func _can_block_damage(source_position) -> bool:
 func _trigger_block_hit() -> void:
 	_is_block_hit_reacting = true
 	_play_animation(BLOCK_HIT_ANIMATION)
+
+
+func _start_hit_reaction() -> void:
+	if _is_dead or not is_on_floor():
+		return
+	var hit_animation := animation_player.get_animation(HIT_REACTION_ANIMATION)
+	if hit_animation == null or hit_animation.length <= 0.0 or hit_reaction_duration <= 0.0:
+		return
+
+	_is_hit_reacting = true
+	_is_moving = false
+	_is_sprinting = false
+	_is_jumping = false
+	_is_landing = false
+	_is_dashing = false
+	_is_attacking = false
+	_is_blocking = false
+	_is_block_hit_reacting = false
+	_block_press_requires_release = _block_press_requires_release or Input.is_action_pressed("block")
+	_dash_direction = Vector3.ZERO
+	_dash_speed = 0.0
+	_dash_time_remaining = 0.0
+	_attack_elapsed = 0.0
+	_current_attack_duration = 0.0
+	_combo_stage = 0
+	_combo_next_queued = false
+	_hit_target_ids.clear()
+
+	var playback_speed := hit_animation.length / hit_reaction_duration
+	_current_animation = &""
+	_play_animation(HIT_REACTION_ANIMATION, playback_speed)
+
+
+func _finish_hit_reaction() -> void:
+	_is_hit_reacting = false
+	if _is_dead:
+		return
+	if is_on_floor():
+		_resume_locomotion_from_input()
+	else:
+		_is_jumping = true
+		_is_landing = false
+		_play_animation(JUMP_IDLE_ANIMATION)
 
 
 func _setup_player_hit_flash() -> void:
@@ -346,12 +395,18 @@ func _physics_process(delta: float) -> void:
 	elif velocity.y < 0.0:
 		velocity.y = -0.1
 
-	_update_block_state(was_on_floor)
+	if not _is_hit_reacting:
+		_update_block_state(was_on_floor)
 
-	if Input.is_action_just_pressed("dash") and was_on_floor and not _is_jumping and not _is_dashing and not _is_attacking and not _is_blocking and not _is_block_hit_reacting:
+	if Input.is_action_just_pressed("dash") and was_on_floor and not _is_jumping and not _is_dashing and not _is_attacking and not _is_blocking and not _is_block_hit_reacting and not _is_hit_reacting:
 		_start_dash(move_direction)
 
-	if _is_dashing:
+	if _is_hit_reacting:
+		var horizontal_velocity := Vector3(velocity.x, 0.0, velocity.z)
+		horizontal_velocity = horizontal_velocity.move_toward(Vector3.ZERO, deceleration * delta)
+		velocity.x = horizontal_velocity.x
+		velocity.z = horizontal_velocity.z
+	elif _is_dashing:
 		var dash_step := minf(delta, _dash_time_remaining)
 		var dash_velocity := _dash_direction * _dash_speed * (dash_step / delta)
 		velocity.x = dash_velocity.x
@@ -455,6 +510,7 @@ func _can_start_block(was_on_floor: bool) -> bool:
 		and not _is_attacking
 		and not _is_dashing
 		and not _is_block_hit_reacting
+		and not _is_hit_reacting
 	)
 
 
@@ -486,7 +542,7 @@ func _resume_locomotion_from_input() -> void:
 
 
 func _handle_attack_input() -> void:
-	if _is_blocking or _is_block_hit_reacting:
+	if _is_blocking or _is_block_hit_reacting or _is_hit_reacting:
 		return
 	if _is_attacking:
 		_try_queue_next_combo_attack()
@@ -507,7 +563,7 @@ func _try_queue_next_combo_attack() -> void:
 
 
 func _start_attack() -> void:
-	if _is_dead or not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
+	if _is_dead or not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting or _is_hit_reacting:
 		return
 	_start_combo_attack(1)
 
@@ -620,7 +676,7 @@ func _exit_tree() -> void:
 
 
 func _start_dash(move_direction: Vector3) -> void:
-	if _is_dead or not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
+	if _is_dead or not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting or _is_hit_reacting:
 		return
 	if is_stamina_exhausted or current_stamina < dash_stamina_cost:
 		return
@@ -667,7 +723,7 @@ func _finish_dash() -> void:
 
 
 func _play_locomotion_animation() -> void:
-	if _is_dead:
+	if _is_dead or _is_hit_reacting:
 		return
 	if not _is_moving:
 		_play_animation(IDLE_ANIMATION)
@@ -695,6 +751,8 @@ func _on_animation_finished(animation_name: StringName) -> void:
 	if animation_name == DEATH_ANIMATION and _is_dead:
 		_death_animation_finished = true
 		_try_respawn()
+	elif animation_name == HIT_REACTION_ANIMATION and _is_hit_reacting:
+		_finish_hit_reaction()
 	elif animation_name == BLOCK_HIT_ANIMATION and _is_block_hit_reacting:
 		_is_block_hit_reacting = false
 		if _is_blocking and Input.is_action_pressed("block"):
