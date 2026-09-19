@@ -15,6 +15,7 @@ const COMBO_2_ANIMATION := &"1H_Melee_Attack_Slice_Horizontal"
 const COMBO_3_ANIMATION := &"1H_Melee_Attack_Stab"
 const BLOCKING_ANIMATION := &"Blocking"
 const BLOCK_HIT_ANIMATION := &"Block_Hit"
+const DEATH_ANIMATION := &"Death_A"
 const MAX_COMBO_STAGE := 3
 
 @export var move_speed: float = 4.0
@@ -31,6 +32,7 @@ const MAX_COMBO_STAGE := 3
 @export_range(0.0, 1.0, 0.01) var combo_queue_end: float = 0.90
 @export var attack_damage: int = 25
 @export var max_health: int = 100
+@export var respawn_delay: float = 2.0
 @export_range(0.0, 360.0, 1.0) var block_angle_degrees: float = 120.0
 @export_range(0.06, 0.10, 0.01) var player_hit_flash_duration: float = 0.08
 @export_range(0.0, 0.20, 0.01) var hit_stop_duration: float = 0.05
@@ -64,6 +66,10 @@ var _is_attacking := false
 var _is_blocking := false
 var _is_block_hit_reacting := false
 var _block_press_requires_release := false
+var _is_dead := false
+var _death_animation_finished := false
+var _death_started_at_msec := 0
+var _initial_global_transform: Transform3D
 var _dash_direction := Vector3.ZERO
 var _dash_speed := 0.0
 var _dash_time_remaining := 0.0
@@ -80,6 +86,7 @@ var _hit_stop_generation := 0
 
 
 func _ready() -> void:
+	_initial_global_transform = global_transform
 	current_health = max_health
 	_update_health_label()
 	_setup_player_hit_flash()
@@ -92,7 +99,7 @@ func _ready() -> void:
 
 
 func take_damage(amount: int, source_position = null) -> bool:
-	if amount <= 0 or current_health <= 0:
+	if amount <= 0 or current_health <= 0 or _is_dead:
 		return false
 	if _can_block_damage(source_position):
 		_trigger_block_hit()
@@ -104,8 +111,60 @@ func take_damage(amount: int, source_position = null) -> bool:
 		return false
 
 	_update_health_label()
-	_trigger_player_hit_flash()
+	if current_health <= 0:
+		_die()
+	else:
+		_trigger_player_hit_flash()
 	return true
+
+
+func _die() -> void:
+	if _is_dead:
+		return
+
+	_is_dead = true
+	_death_animation_finished = false
+	_death_started_at_msec = Time.get_ticks_msec()
+	_cancel_combat_and_movement()
+	velocity.x = 0.0
+	velocity.z = 0.0
+	_play_animation(DEATH_ANIMATION)
+
+
+func _cancel_combat_and_movement() -> void:
+	_is_moving = false
+	_is_sprinting = false
+	_is_jumping = false
+	_is_landing = false
+	_is_dashing = false
+	_is_attacking = false
+	_is_blocking = false
+	_is_block_hit_reacting = false
+	_dash_direction = Vector3.ZERO
+	_dash_speed = 0.0
+	_dash_time_remaining = 0.0
+	_attack_elapsed = 0.0
+	_current_attack_duration = 0.0
+	_combo_stage = 0
+	_combo_next_queued = false
+	_hit_target_ids.clear()
+
+
+func _try_respawn() -> void:
+	if not _is_dead or not _death_animation_finished:
+		return
+	var elapsed_seconds := float(Time.get_ticks_msec() - _death_started_at_msec) / 1000.0
+	if elapsed_seconds < respawn_delay:
+		return
+
+	global_transform = _initial_global_transform
+	velocity = Vector3.ZERO
+	current_health = max_health
+	_cancel_combat_and_movement()
+	_update_health_label()
+	_is_dead = false
+	_death_animation_finished = false
+	_play_animation(IDLE_ANIMATION)
 
 
 func _can_block_damage(source_position) -> bool:
@@ -167,6 +226,8 @@ func _update_health_label() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	elif _is_dead:
+		return
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
 		if event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			_block_press_requires_release = true
@@ -193,6 +254,17 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if _is_dead:
+		if not is_on_floor():
+			velocity.y -= _gravity * delta
+		elif velocity.y < 0.0:
+			velocity.y = -0.1
+		velocity.x = 0.0
+		velocity.z = 0.0
+		move_and_slide()
+		_try_respawn()
+		return
+
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	var camera_forward := -camera.global_transform.basis.z
 	var camera_right := camera.global_transform.basis.x
@@ -300,7 +372,8 @@ func _update_block_state(was_on_floor: bool) -> void:
 
 func _can_start_block(was_on_floor: bool) -> bool:
 	return (
-		Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+		not _is_dead
+		and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 		and not _block_press_requires_release
 		and was_on_floor
 		and not _is_jumping
@@ -354,12 +427,14 @@ func _try_queue_next_combo_attack() -> void:
 
 
 func _start_attack() -> void:
-	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
+	if _is_dead or not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
 		return
 	_start_combo_attack(1)
 
 
 func _start_combo_attack(stage: int) -> bool:
+	if _is_dead:
+		return false
 	var attack_animation_name := _get_combo_animation(stage)
 	var configured_duration := _get_combo_duration(stage)
 	if attack_animation_name == &"" or configured_duration <= 0.0:
@@ -462,7 +537,7 @@ func _exit_tree() -> void:
 
 
 func _start_dash(move_direction: Vector3) -> void:
-	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
+	if _is_dead or not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
 		return
 
 	var facing_direction := knight.global_transform.basis.z
@@ -506,6 +581,8 @@ func _finish_dash() -> void:
 
 
 func _play_locomotion_animation() -> void:
+	if _is_dead:
+		return
 	if not _is_moving:
 		_play_animation(IDLE_ANIMATION)
 	elif _is_sprinting:
@@ -516,6 +593,8 @@ func _play_locomotion_animation() -> void:
 
 
 func _play_animation(animation_name: StringName, playback_speed: float = 1.0) -> void:
+	if _is_dead and animation_name != DEATH_ANIMATION:
+		return
 	animation_player.speed_scale = playback_speed
 	if _current_animation == animation_name and animation_player.is_playing():
 		return
@@ -527,7 +606,10 @@ func _on_animation_finished(animation_name: StringName) -> void:
 	if animation_name != _current_animation:
 		return
 
-	if animation_name == BLOCK_HIT_ANIMATION and _is_block_hit_reacting:
+	if animation_name == DEATH_ANIMATION and _is_dead:
+		_death_animation_finished = true
+		_try_respawn()
+	elif animation_name == BLOCK_HIT_ANIMATION and _is_block_hit_reacting:
 		_is_block_hit_reacting = false
 		if _is_blocking and Input.is_action_pressed("block"):
 			_play_animation(BLOCKING_ANIMATION)

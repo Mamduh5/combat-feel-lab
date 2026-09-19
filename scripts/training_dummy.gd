@@ -3,6 +3,7 @@ extends Node3D
 const IDLE_ANIMATION := &"Idle_A"
 const HIT_REACTION_ANIMATION := &"Hit_A"
 const ENEMY_ATTACK_ANIMATION := &"Unarmed_Melee_Attack_Punch_A"
+const DEATH_ANIMATION := &"Death_A"
 const GENERAL_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium/Rig_Medium_General.glb")
 const ATTACK_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium/Rig_Medium_CombatMelee.glb")
 
@@ -11,6 +12,7 @@ const ATTACK_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Charac
 @export var attack_cooldown: float = 1.5
 @export var telegraph_duration: float = 0.45
 @export var attack_damage: int = 20
+@export var respawn_delay: float = 2.0
 @export_range(0.0, 1.0, 0.01) var enemy_hit_start: float = 0.30
 @export_range(0.0, 1.0, 0.01) var enemy_hit_end: float = 0.60
 @export_range(0.06, 0.10, 0.01) var hit_flash_duration: float = 0.08
@@ -21,6 +23,8 @@ const ATTACK_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Charac
 @onready var target_animation_player: AnimationPlayer = $VisualRoot/TargetAnimationPlayer
 @onready var enemy_attack_hitbox: Area3D = $VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyHandAttachment/EnemyAttackHitbox
 @onready var player: CharacterBody3D = $"../Player"
+@onready var static_collision: CollisionShape3D = $StaticBody3D/CollisionShape3D
+@onready var hurtbox: Area3D = $Hurtbox
 
 var current_health: int
 var _enemy_attack_duration := 0.0
@@ -29,6 +33,10 @@ var _telegraph_elapsed := 0.0
 var _cooldown_remaining := 0.0
 var _is_telegraphing := false
 var _is_enemy_attacking := false
+var _is_dead := false
+var _death_animation_finished := false
+var _death_started_at_msec := 0
+var _initial_global_transform: Transform3D
 var _enemy_hit_target_ids: Dictionary = {}
 var _flash_material: StandardMaterial3D
 var _flash_meshes: Array[MeshInstance3D] = []
@@ -37,6 +45,7 @@ var _flash_generation := 0
 
 
 func _ready() -> void:
+	_initial_global_transform = global_transform
 	current_health = max_health
 	_update_health_label()
 	_setup_target_animations()
@@ -46,6 +55,10 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if _is_dead:
+		_try_respawn()
+		return
+
 	if _cooldown_remaining > 0.0:
 		_cooldown_remaining = maxf(_cooldown_remaining - delta, 0.0)
 
@@ -67,7 +80,7 @@ func _physics_process(delta: float) -> void:
 
 
 func take_damage(amount: int) -> bool:
-	if amount <= 0 or current_health <= 0:
+	if amount <= 0 or current_health <= 0 or _is_dead:
 		return false
 
 	var previous_health := current_health
@@ -76,10 +89,64 @@ func take_damage(amount: int) -> bool:
 		return false
 
 	_update_health_label()
-	if not _is_telegraphing and not _is_enemy_attacking:
+	if current_health <= 0:
+		_die()
+	elif not _is_telegraphing and not _is_enemy_attacking:
 		target_animation_player.play(HIT_REACTION_ANIMATION)
 	_trigger_hit_flash()
 	return true
+
+
+func _die() -> void:
+	if _is_dead:
+		return
+
+	_is_dead = true
+	_death_animation_finished = false
+	_death_started_at_msec = Time.get_ticks_msec()
+	_is_telegraphing = false
+	_is_enemy_attacking = false
+	_telegraph_elapsed = 0.0
+	_enemy_attack_elapsed = 0.0
+	_cooldown_remaining = 0.0
+	_enemy_hit_target_ids.clear()
+	telegraph_label.visible = false
+	enemy_attack_hitbox.set_deferred("monitoring", false)
+	target_animation_player.play(DEATH_ANIMATION)
+
+
+func _finish_death_animation() -> void:
+	_death_animation_finished = true
+	static_collision.set_deferred("disabled", true)
+	hurtbox.set_deferred("monitoring", false)
+	hurtbox.set_deferred("monitorable", false)
+	_try_respawn()
+
+
+func _try_respawn() -> void:
+	if not _is_dead or not _death_animation_finished:
+		return
+	var elapsed_seconds := float(Time.get_ticks_msec() - _death_started_at_msec) / 1000.0
+	if elapsed_seconds < respawn_delay:
+		return
+
+	global_transform = _initial_global_transform
+	current_health = max_health
+	_is_dead = false
+	_death_animation_finished = false
+	_is_telegraphing = false
+	_is_enemy_attacking = false
+	_telegraph_elapsed = 0.0
+	_enemy_attack_elapsed = 0.0
+	_cooldown_remaining = 0.0
+	_enemy_hit_target_ids.clear()
+	telegraph_label.visible = false
+	static_collision.set_deferred("disabled", false)
+	hurtbox.set_deferred("monitoring", true)
+	hurtbox.set_deferred("monitorable", true)
+	enemy_attack_hitbox.set_deferred("monitoring", true)
+	_update_health_label()
+	_play_idle()
 
 
 func _setup_target_animations() -> void:
@@ -114,6 +181,8 @@ func _setup_hit_flash() -> void:
 
 
 func _start_telegraph() -> void:
+	if _is_dead:
+		return
 	_is_telegraphing = true
 	_telegraph_elapsed = 0.0
 	telegraph_label.visible = true
@@ -128,6 +197,8 @@ func _cancel_telegraph() -> void:
 
 
 func _start_enemy_attack() -> void:
+	if _is_dead:
+		return
 	_is_telegraphing = false
 	telegraph_label.visible = false
 	_is_enemy_attacking = true
@@ -144,6 +215,8 @@ func _finish_enemy_attack() -> void:
 
 
 func _process_enemy_attack_hits(delta: float) -> void:
+	if _is_dead:
+		return
 	_enemy_attack_elapsed += delta
 	if _enemy_attack_duration <= 0.0:
 		return
@@ -186,11 +259,15 @@ func _trigger_hit_flash() -> void:
 
 
 func _play_idle() -> void:
+	if _is_dead:
+		return
 	target_animation_player.play(IDLE_ANIMATION)
 
 
 func _on_target_animation_finished(animation_name: StringName) -> void:
-	if animation_name == ENEMY_ATTACK_ANIMATION and _is_enemy_attacking:
+	if animation_name == DEATH_ANIMATION and _is_dead:
+		_finish_death_animation()
+	elif animation_name == ENEMY_ATTACK_ANIMATION and _is_enemy_attacking:
 		_finish_enemy_attack()
 	elif animation_name == HIT_REACTION_ANIMATION:
 		_play_idle()
