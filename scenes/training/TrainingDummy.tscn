@@ -1,16 +1,11 @@
 [gd_scene format=3 uid="uid://bhrow7ex6icx"]
 
 [ext_resource type="Script" uid="uid://cyqv83hs6gu8j" path="res://scripts/training_dummy.gd" id="1_b05k5"]
+[ext_resource type="PackedScene" uid="uid://bdgmmb71gd3jr" path="res://assets/third_party/KayKit_Character_Animations_1.1/Mannequin Character/characters/Mannequin_Medium.glb" id="2_mannequin"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_c4shs"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_rt15g"]
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dmynj"]
-albedo_color = Color(0.72, 0.32, 0.12, 1)
-roughness = 0.85
-
-[sub_resource type="CylinderMesh" id="CylinderMesh_rkdhg"]
 
 [node name="TrainingDummy" type="Node3D" unique_id=2065618547]
 script = ExtResource("1_b05k5")
@@ -29,10 +24,12 @@ collision_mask = 0
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 shape = SubResource("CylinderShape3D_rt15g")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=639547027]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
-material_override = SubResource("StandardMaterial3D_dmynj")
-mesh = SubResource("CylinderMesh_rkdhg")
+[node name="VisualRoot" type="Node3D" parent="."]
+
+[node name="TargetCharacter" parent="VisualRoot" instance=ExtResource("2_mannequin")]
+
+[node name="TargetAnimationPlayer" type="AnimationPlayer" parent="VisualRoot"]
+root_node = NodePath("../TargetCharacter")
 
 [node name="Label3D" type="Label3D" parent="." unique_id=1385854300]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.35, 0)

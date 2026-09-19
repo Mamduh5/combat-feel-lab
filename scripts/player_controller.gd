@@ -21,6 +21,7 @@ const ATTACK_ANIMATION := &"1H_Melee_Attack_Slice_Diagonal"
 @export var dash_distance: float = 4.5
 @export var attack_duration: float = 0.75
 @export var attack_damage: int = 25
+@export_range(0.0, 0.20, 0.01) var hit_stop_duration: float = 0.05
 @export_range(0.0, 1.0, 0.01) var attack_hit_start: float = 0.25
 @export_range(0.0, 1.0, 0.01) var attack_hit_end: float = 0.75
 @export var mouse_sensitivity: float = 0.0025
@@ -49,6 +50,9 @@ var _current_animation: StringName = &""
 var _ignore_next_mouse_motion := false
 var _attack_elapsed := 0.0
 var _hit_target_ids: Dictionary = {}
+var _hit_stop_active := false
+var _hit_stop_restore_scale := 1.0
+var _hit_stop_generation := 0
 
 
 func _ready() -> void:
@@ -217,7 +221,32 @@ func _process_attack_hits(delta: float) -> void:
 		if _hit_target_ids.has(target_id):
 			continue
 		_hit_target_ids[target_id] = true
-		target.take_damage(attack_damage)
+		var damage_applied := bool(target.take_damage(attack_damage))
+		if damage_applied:
+			_trigger_hit_stop()
+
+
+func _trigger_hit_stop() -> void:
+	if hit_stop_duration <= 0.0:
+		return
+
+	if not _hit_stop_active:
+		_hit_stop_restore_scale = Engine.time_scale
+		_hit_stop_active = true
+	_hit_stop_generation += 1
+	var generation := _hit_stop_generation
+	Engine.time_scale = 0.0
+
+	await get_tree().create_timer(hit_stop_duration, true, false, true).timeout
+	if generation != _hit_stop_generation:
+		return
+	Engine.time_scale = _hit_stop_restore_scale
+	_hit_stop_active = false
+
+
+func _exit_tree() -> void:
+	if _hit_stop_active:
+		Engine.time_scale = _hit_stop_restore_scale
 
 
 func _start_dash(move_direction: Vector3) -> void:

@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://c8hbs1fih7w1s"]
+
+[ext_resource type="Script" path="res://scripts/_asset_probe.gd" id="1_htsjv"]
+
+[node name="AssetProbe" type="Node" unique_id=918323637]
+script = ExtResource("1_htsjv")
