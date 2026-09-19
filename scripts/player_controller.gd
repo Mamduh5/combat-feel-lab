@@ -20,6 +20,9 @@ const ATTACK_ANIMATION := &"1H_Melee_Attack_Slice_Diagonal"
 @export var rotation_speed: float = 10.0
 @export var dash_distance: float = 4.5
 @export var attack_duration: float = 0.25
+@export var attack_damage: int = 25
+@export_range(0.0, 1.0, 0.01) var attack_hit_start: float = 0.25
+@export_range(0.0, 1.0, 0.01) var attack_hit_end: float = 0.75
 @export var mouse_sensitivity: float = 0.0025
 @export_range(-89.0, 0.0, 0.5) var minimum_camera_pitch: float = -55.0
 @export_range(0.0, 89.0, 0.5) var maximum_camera_pitch: float = 35.0
@@ -30,6 +33,7 @@ const ATTACK_ANIMATION := &"1H_Melee_Attack_Slice_Diagonal"
 @onready var camera_pivot: Node3D = $CameraPivot
 @onready var spring_arm: SpringArm3D = $CameraPivot/SpringArm3D
 @onready var camera: Camera3D = $CameraPivot/SpringArm3D/Camera3D
+@onready var sword_hitbox: Area3D = get_node("Knight/Rig/Skeleton3D/handslot_r/1H_Sword/SwordHitbox")
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _is_moving := false
@@ -43,6 +47,8 @@ var _dash_speed := 0.0
 var _dash_time_remaining := 0.0
 var _current_animation: StringName = &""
 var _ignore_next_mouse_motion := false
+var _attack_elapsed := 0.0
+var _hit_target_ids: Dictionary = {}
 
 
 func _ready() -> void:
@@ -156,6 +162,9 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 
+	if _is_attacking:
+		_process_attack_hits(delta)
+
 	if _is_dashing and _dash_time_remaining <= 0.000001:
 		_finish_dash()
 
@@ -180,15 +189,35 @@ func _start_attack() -> void:
 	_is_landing = false
 	_is_moving = false
 	_is_sprinting = false
+	_attack_elapsed = 0.0
+	_hit_target_ids.clear()
 	_play_animation(ATTACK_ANIMATION, attack_playback_speed)
 
 
 func _finish_attack() -> void:
 	_is_attacking = false
+	_attack_elapsed = 0.0
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
 	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and is_on_floor()
 	_play_locomotion_animation()
+
+
+func _process_attack_hits(delta: float) -> void:
+	_attack_elapsed += delta
+	var normalized_progress := _attack_elapsed / attack_duration
+	if normalized_progress < attack_hit_start or normalized_progress > attack_hit_end:
+		return
+
+	for hurtbox in sword_hitbox.get_overlapping_areas():
+		var target := hurtbox.get_parent()
+		if not target.has_method("take_damage"):
+			continue
+		var target_id := target.get_instance_id()
+		if _hit_target_ids.has(target_id):
+			continue
+		_hit_target_ids[target_id] = true
+		target.take_damage(attack_damage)
 
 
 func _start_dash(move_direction: Vector3) -> void:

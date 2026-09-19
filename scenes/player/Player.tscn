@@ -3,6 +3,9 @@
 [ext_resource type="Script" uid="uid://dl4wrmb7413mq" path="res://scripts/player_controller.gd" id="1_gfjak"]
 [ext_resource type="PackedScene" uid="uid://bth3bk0ba6f6d" path="res://assets/third_party/KayKit-Character-Pack-Adventures-1.0-672074b73ba276876a19e8816ecdc5241817ab47/addons/kaykit_character_pack_adventures/Characters/gltf/Knight.glb" id="1_wr5hl"]
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_gfjak"]
+size = Vector3(0.14, 1.15, 0.12)
+
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_4kuee"]
 radius = 0.45
 height = 1.8
@@ -10,22 +13,31 @@ height = 1.8
 [node name="Player" type="CharacterBody3D" unique_id=934096715]
 script = ExtResource("1_gfjak")
 
-[node name="Knight" type="Node3D" parent="." unique_id=235979211 instance=ExtResource("1_wr5hl")]
+[node name="Knight" parent="." unique_id=235979211 instance=ExtResource("1_wr5hl")]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0, 0)
 
-[node name="1H_Sword_Offhand" parent="Knight/Rig/Skeleton3D/handslot_l" index="0"]
+[node name="1H_Sword_Offhand" parent="Knight/Rig/Skeleton3D/handslot_l" parent_id_path=PackedInt32Array(235979211, 1440445016) index="0"]
 visible = false
 
-[node name="Badge_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" index="1"]
+[node name="Badge_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" parent_id_path=PackedInt32Array(235979211, 1440445016) index="1" unique_id=2134034399]
 visible = false
 
-[node name="Rectangle_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" index="2"]
+[node name="Rectangle_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" parent_id_path=PackedInt32Array(235979211, 1440445016) index="2" unique_id=889566193]
 visible = false
 
-[node name="Spike_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" index="4"]
+[node name="Spike_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" parent_id_path=PackedInt32Array(235979211, 1440445016) index="4" unique_id=35798399]
 visible = false
 
-[node name="2H_Sword" parent="Knight/Rig/Skeleton3D/handslot_r" index="1"]
+[node name="SwordHitbox" type="Area3D" parent="Knight/Rig/Skeleton3D/handslot_r/1H_Sword" parent_id_path=PackedInt32Array(235979211, 1065966276) index="0" unique_id=1888973792]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.78, 0)
+collision_layer = 0
+collision_mask = 2
+monitorable = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Knight/Rig/Skeleton3D/handslot_r/1H_Sword/SwordHitbox" unique_id=1062619162]
+shape = SubResource("BoxShape3D_gfjak")
+
+[node name="2H_Sword" parent="Knight/Rig/Skeleton3D/handslot_r" parent_id_path=PackedInt32Array(235979211, 552325435) index="1" unique_id=1648060181]
 visible = false
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=973438353]

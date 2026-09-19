@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://c1q5kyyxmk50d"]
 
 [ext_resource type="PackedScene" uid="uid://dj4gc575cvlgf" path="res://scenes/player/Player.tscn" id="1_glv2v"]
+[ext_resource type="PackedScene" uid="uid://bhrow7ex6icx" path="res://scenes/training/TrainingDummy.tscn" id="2_training_dummy"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_glv2v"]
 size = Vector3(48.326477, 0.2, 39.377167)
@@ -11,6 +12,9 @@ size = Vector3(48.313538, 0.2, 39.352234)
 [node name="Main" type="Node3D" unique_id=1800392470]
 
 [node name="Player" parent="." unique_id=1984599509 instance=ExtResource("1_glv2v")]
+
+[node name="TrainingDummy" parent="." instance=ExtResource("2_training_dummy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -3)
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1484732173]
 transform = Transform3D(0.81915206, 0.4055798, -0.4055798, 0, 0.70710677, 0.70710677, 0.57357645, -0.579228, 0.579228, 0, 0, 0)
