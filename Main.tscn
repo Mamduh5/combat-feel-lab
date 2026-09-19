@@ -3,7 +3,7 @@
 [ext_resource type="PackedScene" uid="uid://dj4gc575cvlgf" path="res://scenes/player/Player.tscn" id="1_glv2v"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_glv2v"]
-size = Vector3(20, 0.2, 20)
+size = Vector3(48.326477, 0.2, 39.377167)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_uu6xs"]
 size = Vector3(20, 0.2, 20)
@@ -20,6 +20,7 @@ light_energy = 1.5
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=2049584850]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.25442505, 0, 4.1858673)
 mesh = SubResource("BoxMesh_glv2v")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1454700469]
