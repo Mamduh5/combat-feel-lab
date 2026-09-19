@@ -5,17 +5,17 @@ const RUN_ANIMATION := &"Running_A"
 const JUMP_START_ANIMATION := &"Jump_Start"
 const JUMP_IDLE_ANIMATION := &"Jump_Idle"
 const JUMP_LAND_ANIMATION := &"Jump_Land"
-const DODGE_FORWARD_ANIMATION := &"Dodge_Forward"
-const DODGE_BACKWARD_ANIMATION := &"Dodge_Backward"
-const DODGE_LEFT_ANIMATION := &"Dodge_Left"
-const DODGE_RIGHT_ANIMATION := &"Dodge_Right"
+const DASH_FORWARD_ANIMATION := &"Dodge_Forward"
+const DASH_BACKWARD_ANIMATION := &"Dodge_Backward"
+const DASH_LEFT_ANIMATION := &"Dodge_Left"
+const DASH_RIGHT_ANIMATION := &"Dodge_Right"
 
 @export var move_speed: float = 4.0
 @export var jump_velocity: float = 6.0
 @export var acceleration: float = 18.0
 @export var deceleration: float = 22.0
 @export var rotation_speed: float = 10.0
-@export var dodge_distance: float = 3.0
+@export var dash_distance: float = 4.5
 @export var mouse_sensitivity: float = 0.0025
 @export_range(-89.0, 0.0, 0.5) var minimum_camera_pitch: float = -55.0
 @export_range(0.0, 89.0, 0.5) var maximum_camera_pitch: float = 35.0
@@ -31,10 +31,10 @@ var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _is_moving := false
 var _is_jumping := false
 var _is_landing := false
-var _is_dodging := false
-var _dodge_direction := Vector3.ZERO
-var _dodge_speed := 0.0
-var _dodge_time_remaining := 0.0
+var _is_dashing := false
+var _dash_direction := Vector3.ZERO
+var _dash_speed := 0.0
+var _dash_time_remaining := 0.0
 var _current_animation: StringName = &""
 var _ignore_next_mouse_motion := false
 
@@ -87,15 +87,15 @@ func _physics_process(delta: float) -> void:
 	elif velocity.y < 0.0:
 		velocity.y = -0.1
 
-	if Input.is_action_just_pressed("dodge") and was_on_floor and not _is_jumping and not _is_dodging:
-		_start_dodge(move_direction)
+	if Input.is_action_just_pressed("dash") and was_on_floor and not _is_jumping and not _is_dashing:
+		_start_dash(move_direction)
 
-	if _is_dodging:
-		var dodge_step := minf(delta, _dodge_time_remaining)
-		var dodge_velocity := _dodge_direction * _dodge_speed * (dodge_step / delta)
-		velocity.x = dodge_velocity.x
-		velocity.z = dodge_velocity.z
-		_dodge_time_remaining -= dodge_step
+	if _is_dashing:
+		var dash_step := minf(delta, _dash_time_remaining)
+		var dash_velocity := _dash_direction * _dash_speed * (dash_step / delta)
+		velocity.x = dash_velocity.x
+		velocity.z = dash_velocity.z
+		_dash_time_remaining -= dash_step
 	else:
 		var horizontal_velocity := Vector3(velocity.x, 0.0, velocity.z)
 		var target_velocity := move_direction * move_speed
@@ -130,49 +130,49 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 
-	if _is_dodging and _dodge_time_remaining <= 0.000001:
-		_finish_dodge()
+	if _is_dashing and _dash_time_remaining <= 0.000001:
+		_finish_dash()
 
-	if not _is_dodging and _is_jumping and not was_on_floor and is_on_floor():
+	if not _is_dashing and _is_jumping and not was_on_floor and is_on_floor():
 		_is_jumping = false
 		_is_landing = true
 		_play_animation(JUMP_LAND_ANIMATION)
 
 
-func _start_dodge(move_direction: Vector3) -> void:
-	if not is_on_floor() or _is_jumping or _is_dodging:
+func _start_dash(move_direction: Vector3) -> void:
+	if not is_on_floor() or _is_jumping or _is_dashing:
 		return
 
 	var facing_direction := knight.global_transform.basis.z
 	facing_direction.y = 0.0
 	facing_direction = facing_direction.normalized()
 
-	_dodge_direction = move_direction.normalized() if move_direction != Vector3.ZERO else facing_direction
+	_dash_direction = move_direction.normalized() if move_direction != Vector3.ZERO else facing_direction
 
-	var local_direction := knight.global_transform.basis.inverse() * _dodge_direction
-	var dodge_animation: StringName
+	var local_direction := knight.global_transform.basis.inverse() * _dash_direction
+	var dash_animation: StringName
 	if absf(local_direction.z) >= absf(local_direction.x):
-		dodge_animation = DODGE_FORWARD_ANIMATION if local_direction.z >= 0.0 else DODGE_BACKWARD_ANIMATION
+		dash_animation = DASH_FORWARD_ANIMATION if local_direction.z >= 0.0 else DASH_BACKWARD_ANIMATION
 	else:
-		dodge_animation = DODGE_RIGHT_ANIMATION if local_direction.x >= 0.0 else DODGE_LEFT_ANIMATION
+		dash_animation = DASH_RIGHT_ANIMATION if local_direction.x >= 0.0 else DASH_LEFT_ANIMATION
 
-	var dodge_duration := animation_player.get_animation(dodge_animation).length
-	if dodge_duration <= 0.0:
+	var dash_duration := animation_player.get_animation(dash_animation).length
+	if dash_duration <= 0.0:
 		return
 
-	_is_dodging = true
+	_is_dashing = true
 	_is_landing = false
 	_is_moving = false
-	_dodge_speed = dodge_distance / dodge_duration
-	_dodge_time_remaining = dodge_duration
-	_play_animation(dodge_animation)
+	_dash_speed = dash_distance / dash_duration
+	_dash_time_remaining = dash_duration
+	_play_animation(dash_animation)
 
 
-func _finish_dodge() -> void:
-	_is_dodging = false
-	_dodge_direction = Vector3.ZERO
-	_dodge_speed = 0.0
-	_dodge_time_remaining = 0.0
+func _finish_dash() -> void:
+	_is_dashing = false
+	_dash_direction = Vector3.ZERO
+	_dash_speed = 0.0
+	_dash_time_remaining = 0.0
 	velocity.x = 0.0
 	velocity.z = 0.0
 
@@ -192,8 +192,8 @@ func _on_animation_finished(animation_name: StringName) -> void:
 	if animation_name != _current_animation:
 		return
 
-	if _is_dodging:
-		_finish_dodge()
+	if _is_dashing:
+		_finish_dash()
 	elif animation_name == JUMP_START_ANIMATION:
 		if _is_jumping and not is_on_floor():
 			_play_animation(JUMP_IDLE_ANIMATION)
