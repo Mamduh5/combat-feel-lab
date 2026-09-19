@@ -10,7 +10,10 @@ const DASH_FORWARD_ANIMATION := &"Dodge_Forward"
 const DASH_BACKWARD_ANIMATION := &"Dodge_Backward"
 const DASH_LEFT_ANIMATION := &"Dodge_Left"
 const DASH_RIGHT_ANIMATION := &"Dodge_Right"
-const ATTACK_ANIMATION := &"1H_Melee_Attack_Slice_Diagonal"
+const COMBO_1_ANIMATION := &"1H_Melee_Attack_Slice_Diagonal"
+const COMBO_2_ANIMATION := &"1H_Melee_Attack_Slice_Horizontal"
+const COMBO_3_ANIMATION := &"1H_Melee_Attack_Stab"
+const MAX_COMBO_STAGE := 3
 
 @export var move_speed: float = 4.0
 @export var sprint_speed: float = 7.5
@@ -19,7 +22,11 @@ const ATTACK_ANIMATION := &"1H_Melee_Attack_Slice_Diagonal"
 @export var deceleration: float = 22.0
 @export var rotation_speed: float = 10.0
 @export var dash_distance: float = 4.5
-@export var attack_duration: float = 0.75
+@export var combo_1_duration: float = 0.75
+@export var combo_2_duration: float = 0.75
+@export var combo_3_duration: float = 0.85
+@export_range(0.0, 1.0, 0.01) var combo_queue_start: float = 0.40
+@export_range(0.0, 1.0, 0.01) var combo_queue_end: float = 0.90
 @export var attack_damage: int = 25
 @export_range(0.0, 0.20, 0.01) var hit_stop_duration: float = 0.05
 @export_range(0.0, 1.0, 0.01) var attack_hit_start: float = 0.25
@@ -49,6 +56,9 @@ var _dash_time_remaining := 0.0
 var _current_animation: StringName = &""
 var _ignore_next_mouse_motion := false
 var _attack_elapsed := 0.0
+var _current_attack_duration := 0.0
+var _combo_stage := 0
+var _combo_next_queued := false
 var _hit_target_ids: Dictionary = {}
 var _hit_stop_active := false
 var _hit_stop_restore_scale := 1.0
@@ -72,7 +82,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			_ignore_next_mouse_motion = true
 		elif event.is_action_pressed("attack"):
-			_start_attack()
+			_handle_attack_input()
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		if _ignore_next_mouse_motion:
 			_ignore_next_mouse_motion = false
@@ -178,28 +188,84 @@ func _physics_process(delta: float) -> void:
 		_play_animation(JUMP_LAND_ANIMATION)
 
 
+func _handle_attack_input() -> void:
+	if _is_attacking:
+		_try_queue_next_combo_attack()
+	else:
+		_start_attack()
+
+
+func _try_queue_next_combo_attack() -> void:
+	if _combo_stage >= MAX_COMBO_STAGE or _combo_next_queued:
+		return
+	if _current_attack_duration <= 0.0:
+		return
+
+	var normalized_progress := _attack_elapsed / _current_attack_duration
+	if normalized_progress < combo_queue_start or normalized_progress > combo_queue_end:
+		return
+	_combo_next_queued = true
+
+
 func _start_attack() -> void:
 	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking:
 		return
-	if attack_duration <= 0.0:
-		return
+	_start_combo_attack(1)
 
-	var attack_animation := animation_player.get_animation(ATTACK_ANIMATION)
+
+func _start_combo_attack(stage: int) -> bool:
+	var attack_animation_name := _get_combo_animation(stage)
+	var configured_duration := _get_combo_duration(stage)
+	if attack_animation_name == &"" or configured_duration <= 0.0:
+		return false
+
+	var attack_animation := animation_player.get_animation(attack_animation_name)
 	if attack_animation == null or attack_animation.length <= 0.0:
-		return
-	var attack_playback_speed := attack_animation.length / attack_duration
+		return false
+	var attack_playback_speed := attack_animation.length / configured_duration
 
 	_is_attacking = true
 	_is_landing = false
 	_is_moving = false
 	_is_sprinting = false
+	_combo_stage = stage
+	_combo_next_queued = false
+	_current_attack_duration = configured_duration
 	_attack_elapsed = 0.0
 	_hit_target_ids.clear()
-	_play_animation(ATTACK_ANIMATION, attack_playback_speed)
+	_play_animation(attack_animation_name, attack_playback_speed)
+	return true
+
+
+func _get_combo_animation(stage: int) -> StringName:
+	match stage:
+		1:
+			return COMBO_1_ANIMATION
+		2:
+			return COMBO_2_ANIMATION
+		3:
+			return COMBO_3_ANIMATION
+		_:
+			return &""
+
+
+func _get_combo_duration(stage: int) -> float:
+	match stage:
+		1:
+			return combo_1_duration
+		2:
+			return combo_2_duration
+		3:
+			return combo_3_duration
+		_:
+			return 0.0
 
 
 func _finish_attack() -> void:
 	_is_attacking = false
+	_combo_stage = 0
+	_combo_next_queued = false
+	_current_attack_duration = 0.0
 	_attack_elapsed = 0.0
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
@@ -209,7 +275,7 @@ func _finish_attack() -> void:
 
 func _process_attack_hits(delta: float) -> void:
 	_attack_elapsed += delta
-	var normalized_progress := _attack_elapsed / attack_duration
+	var normalized_progress := _attack_elapsed / _current_attack_duration
 	if normalized_progress < attack_hit_start or normalized_progress > attack_hit_end:
 		return
 
@@ -315,8 +381,13 @@ func _on_animation_finished(animation_name: StringName) -> void:
 	if animation_name != _current_animation:
 		return
 
-	if _is_attacking and animation_name == ATTACK_ANIMATION:
-		_finish_attack()
+	if _is_attacking and animation_name == _get_combo_animation(_combo_stage):
+		if _combo_next_queued and _combo_stage < MAX_COMBO_STAGE:
+			var next_stage := _combo_stage + 1
+			if not _start_combo_attack(next_stage):
+				_finish_attack()
+		else:
+			_finish_attack()
 	elif _is_dashing:
 		_finish_dash()
 	elif animation_name == JUMP_START_ANIMATION:
