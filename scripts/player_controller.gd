@@ -28,8 +28,10 @@ const MAX_COMBO_STAGE := 3
 @export var combo_1_duration: float = 0.75
 @export var combo_2_duration: float = 0.75
 @export var combo_3_duration: float = 0.85
-@export_range(0.0, 1.0, 0.01) var combo_queue_start: float = 0.40
-@export_range(0.0, 1.0, 0.01) var combo_queue_end: float = 0.90
+@export_range(0.0, 1.0, 0.01) var combo_queue_start: float = 0.25
+@export_range(0.0, 1.0, 0.01) var combo_queue_end: float = 0.70
+@export_range(0.0, 1.0, 0.01) var combo_chain_point: float = 0.75
+@export_range(0.0, 0.20, 0.01) var combo_transition_blend: float = 0.06
 @export var attack_damage: int = 25
 @export var max_health: int = 100
 @export var max_stamina: float = 100.0
@@ -61,6 +63,7 @@ const MAX_COMBO_STAGE := 3
 
 var current_health: int
 var current_stamina: float
+var is_stamina_exhausted := false
 var _player_flash_material: StandardMaterial3D
 var _player_flash_meshes: Array[MeshInstance3D] = []
 var _player_original_material_overrides: Dictionary = {}
@@ -75,8 +78,6 @@ var _is_attacking := false
 var _is_blocking := false
 var _is_block_hit_reacting := false
 var _block_press_requires_release := false
-var _block_stamina_lock := false
-var _sprint_stamina_lock := false
 var _stamina_regen_delay_remaining := 0.0
 var _is_dead := false
 var _death_animation_finished := false
@@ -182,9 +183,8 @@ func _try_respawn() -> void:
 	velocity = Vector3.ZERO
 	current_health = max_health
 	current_stamina = max_stamina
+	is_stamina_exhausted = false
 	_stamina_regen_delay_remaining = 0.0
-	_sprint_stamina_lock = false
-	_block_stamina_lock = false
 	_cancel_combat_and_movement()
 	_update_health_label()
 	_update_stamina_hud()
@@ -255,13 +255,17 @@ func _update_stamina_hud() -> void:
 		stamina_bar.max_value = max_stamina
 		stamina_bar.value = current_stamina
 	if stamina_label != null:
-		stamina_label.text = "Stamina: %d / %d" % [roundi(current_stamina), roundi(max_stamina)]
+		var exhaustion_suffix := " — EXHAUSTED" if is_stamina_exhausted else ""
+		stamina_label.text = "Stamina: %d / %d%s" % [roundi(current_stamina), roundi(max_stamina), exhaustion_suffix]
 
 
 func _spend_stamina(amount: float) -> void:
 	if amount <= 0.0:
 		return
+	var stamina_before_spending := current_stamina
 	current_stamina = clampf(current_stamina - amount, 0.0, max_stamina)
+	if stamina_before_spending > 0.0 and current_stamina <= 0.0:
+		is_stamina_exhausted = true
 	_stamina_regen_delay_remaining = stamina_regen_delay
 	_update_stamina_hud()
 
@@ -276,6 +280,9 @@ func _process_stamina(delta: float) -> void:
 		return
 	if current_stamina < max_stamina:
 		current_stamina = minf(current_stamina + stamina_regen_rate * delta, max_stamina)
+		if current_stamina >= max_stamina:
+			current_stamina = max_stamina
+			is_stamina_exhausted = false
 		_update_stamina_hud()
 
 
@@ -321,9 +328,6 @@ func _physics_process(delta: float) -> void:
 		_try_respawn()
 		return
 
-	if not Input.is_action_pressed("sprint"):
-		_sprint_stamina_lock = false
-
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	var camera_forward := -camera.global_transform.basis.z
 	var camera_right := camera.global_transform.basis.x
@@ -368,7 +372,7 @@ func _physics_process(delta: float) -> void:
 			move_direction != Vector3.ZERO
 			and Input.is_action_pressed("sprint")
 			and current_stamina > 0.0
-			and not _sprint_stamina_lock
+			and not is_stamina_exhausted
 			and was_on_floor
 			and not _is_jumping
 		)
@@ -381,9 +385,8 @@ func _physics_process(delta: float) -> void:
 		horizontal_velocity = horizontal_velocity.move_toward(target_velocity, change_rate * delta)
 		if sprinting_now:
 			_spend_stamina(sprint_stamina_drain * delta)
-			if current_stamina <= 0.0:
+			if is_stamina_exhausted:
 				sprinting_now = false
-				_sprint_stamina_lock = true
 				horizontal_velocity = horizontal_velocity.limit_length(move_speed)
 		velocity.x = horizontal_velocity.x
 		velocity.z = horizontal_velocity.z
@@ -433,8 +436,6 @@ func _physics_process(delta: float) -> void:
 
 func _update_block_state(was_on_floor: bool) -> void:
 	var block_held := Input.is_action_pressed("block")
-	if not block_held and current_stamina > 0.0:
-		_block_stamina_lock = false
 	if _is_blocking and not block_held:
 		_stop_blocking()
 	elif not _is_blocking and block_held and _can_start_block(was_on_floor):
@@ -446,7 +447,7 @@ func _can_start_block(was_on_floor: bool) -> bool:
 		not _is_dead
 		and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 		and not _block_press_requires_release
-		and not _block_stamina_lock
+		and not is_stamina_exhausted
 		and current_stamina > 0.0
 		and was_on_floor
 		and not _is_jumping
@@ -473,7 +474,6 @@ func _stop_blocking() -> void:
 
 func _end_block_from_stamina_exhaustion() -> void:
 	_is_blocking = false
-	_block_stamina_lock = true
 	if not _is_block_hit_reacting:
 		_resume_locomotion_from_input()
 
@@ -481,7 +481,7 @@ func _end_block_from_stamina_exhaustion() -> void:
 func _resume_locomotion_from_input() -> void:
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
-	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not _sprint_stamina_lock and is_on_floor()
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not is_stamina_exhausted and is_on_floor()
 	_play_locomotion_animation()
 
 
@@ -512,7 +512,7 @@ func _start_attack() -> void:
 	_start_combo_attack(1)
 
 
-func _start_combo_attack(stage: int) -> bool:
+func _start_combo_attack(stage: int, transition_blend: float = -1.0) -> bool:
 	if _is_dead:
 		return false
 	var attack_animation_name := _get_combo_animation(stage)
@@ -534,7 +534,7 @@ func _start_combo_attack(stage: int) -> bool:
 	_current_attack_duration = configured_duration
 	_attack_elapsed = 0.0
 	_hit_target_ids.clear()
-	_play_animation(attack_animation_name, attack_playback_speed)
+	_play_animation(attack_animation_name, attack_playback_speed, transition_blend)
 	return true
 
 
@@ -570,27 +570,30 @@ func _finish_attack() -> void:
 	_attack_elapsed = 0.0
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
-	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not _sprint_stamina_lock and is_on_floor()
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not is_stamina_exhausted and is_on_floor()
 	_play_locomotion_animation()
 
 
 func _process_attack_hits(delta: float) -> void:
 	_attack_elapsed += delta
 	var normalized_progress := _attack_elapsed / _current_attack_duration
-	if normalized_progress < attack_hit_start or normalized_progress > attack_hit_end:
-		return
+	if normalized_progress >= attack_hit_start and normalized_progress <= attack_hit_end:
+		for hurtbox in sword_hitbox.get_overlapping_areas():
+			var target := hurtbox.get_parent()
+			if not target.has_method("take_damage"):
+				continue
+			var target_id := target.get_instance_id()
+			if _hit_target_ids.has(target_id):
+				continue
+			_hit_target_ids[target_id] = true
+			var damage_applied := bool(target.take_damage(attack_damage))
+			if damage_applied:
+				_trigger_hit_stop()
 
-	for hurtbox in sword_hitbox.get_overlapping_areas():
-		var target := hurtbox.get_parent()
-		if not target.has_method("take_damage"):
-			continue
-		var target_id := target.get_instance_id()
-		if _hit_target_ids.has(target_id):
-			continue
-		_hit_target_ids[target_id] = true
-		var damage_applied := bool(target.take_damage(attack_damage))
-		if damage_applied:
-			_trigger_hit_stop()
+	if _combo_next_queued and _combo_stage < MAX_COMBO_STAGE and normalized_progress >= combo_chain_point:
+		var next_stage := _combo_stage + 1
+		if not _start_combo_attack(next_stage, combo_transition_blend):
+			_finish_attack()
 
 
 func _trigger_hit_stop() -> void:
@@ -619,7 +622,7 @@ func _exit_tree() -> void:
 func _start_dash(move_direction: Vector3) -> void:
 	if _is_dead or not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
 		return
-	if current_stamina < dash_stamina_cost:
+	if is_stamina_exhausted or current_stamina < dash_stamina_cost:
 		return
 
 	var facing_direction := knight.global_transform.basis.z
@@ -659,7 +662,7 @@ func _finish_dash() -> void:
 
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
-	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not _sprint_stamina_lock and is_on_floor()
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not is_stamina_exhausted and is_on_floor()
 	_play_locomotion_animation()
 
 
@@ -675,14 +678,14 @@ func _play_locomotion_animation() -> void:
 		_play_animation(RUN_ANIMATION)
 
 
-func _play_animation(animation_name: StringName, playback_speed: float = 1.0) -> void:
+func _play_animation(animation_name: StringName, playback_speed: float = 1.0, custom_blend: float = -1.0) -> void:
 	if _is_dead and animation_name != DEATH_ANIMATION:
 		return
 	animation_player.speed_scale = playback_speed
 	if _current_animation == animation_name and animation_player.is_playing():
 		return
 	_current_animation = animation_name
-	animation_player.play(animation_name)
+	animation_player.play(animation_name, custom_blend)
 
 
 func _on_animation_finished(animation_name: StringName) -> void:
@@ -704,7 +707,7 @@ func _on_animation_finished(animation_name: StringName) -> void:
 	elif _is_attacking and animation_name == _get_combo_animation(_combo_stage):
 		if _combo_next_queued and _combo_stage < MAX_COMBO_STAGE:
 			var next_stage := _combo_stage + 1
-			if not _start_combo_attack(next_stage):
+			if not _start_combo_attack(next_stage, combo_transition_blend):
 				_finish_attack()
 		else:
 			_finish_attack()
