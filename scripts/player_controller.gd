@@ -2,6 +2,7 @@ extends CharacterBody3D
 
 const IDLE_ANIMATION := &"Idle"
 const RUN_ANIMATION := &"Running_A"
+const SPRINT_ANIMATION := &"Running_A"
 const JUMP_START_ANIMATION := &"Jump_Start"
 const JUMP_IDLE_ANIMATION := &"Jump_Idle"
 const JUMP_LAND_ANIMATION := &"Jump_Land"
@@ -11,6 +12,7 @@ const DASH_LEFT_ANIMATION := &"Dodge_Left"
 const DASH_RIGHT_ANIMATION := &"Dodge_Right"
 
 @export var move_speed: float = 4.0
+@export var sprint_speed: float = 7.5
 @export var jump_velocity: float = 6.0
 @export var acceleration: float = 18.0
 @export var deceleration: float = 22.0
@@ -29,6 +31,7 @@ const DASH_RIGHT_ANIMATION := &"Dodge_Right"
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _is_moving := false
+var _is_sprinting := false
 var _is_jumping := false
 var _is_landing := false
 var _is_dashing := false
@@ -97,8 +100,17 @@ func _physics_process(delta: float) -> void:
 		velocity.z = dash_velocity.z
 		_dash_time_remaining -= dash_step
 	else:
+		var sprinting_now := (
+			move_direction != Vector3.ZERO
+			and Input.is_action_pressed("sprint")
+			and was_on_floor
+			and not _is_jumping
+		)
 		var horizontal_velocity := Vector3(velocity.x, 0.0, velocity.z)
-		var target_velocity := move_direction * move_speed
+		if _is_sprinting and not sprinting_now and move_direction != Vector3.ZERO:
+			horizontal_velocity = horizontal_velocity.limit_length(move_speed)
+		var target_speed := sprint_speed if sprinting_now else move_speed
+		var target_velocity := move_direction * target_speed
 		var change_rate := acceleration if move_direction != Vector3.ZERO else deceleration
 		horizontal_velocity = horizontal_velocity.move_toward(target_velocity, change_rate * delta)
 		velocity.x = horizontal_velocity.x
@@ -108,6 +120,7 @@ func _physics_process(delta: float) -> void:
 			velocity.y = jump_velocity
 			_is_jumping = true
 			_is_landing = false
+			sprinting_now = false
 			_play_animation(JUMP_START_ANIMATION)
 
 		if move_direction != Vector3.ZERO:
@@ -123,10 +136,12 @@ func _physics_process(delta: float) -> void:
 			)
 
 		var moving_now := horizontal_velocity.length() > 0.1
-		if moving_now != _is_moving:
-			_is_moving = moving_now
+		var locomotion_changed := moving_now != _is_moving or sprinting_now != _is_sprinting
+		_is_moving = moving_now
+		_is_sprinting = sprinting_now
+		if locomotion_changed:
 			if not _is_jumping and not _is_landing:
-				_play_animation(RUN_ANIMATION if _is_moving else IDLE_ANIMATION)
+				_play_locomotion_animation()
 
 	move_and_slide()
 
@@ -163,6 +178,7 @@ func _start_dash(move_direction: Vector3) -> void:
 	_is_dashing = true
 	_is_landing = false
 	_is_moving = false
+	_is_sprinting = false
 	_dash_speed = dash_distance / dash_duration
 	_dash_time_remaining = dash_duration
 	_play_animation(dash_animation)
@@ -178,10 +194,22 @@ func _finish_dash() -> void:
 
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
-	_play_animation(RUN_ANIMATION if _is_moving else IDLE_ANIMATION)
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and is_on_floor()
+	_play_locomotion_animation()
 
 
-func _play_animation(animation_name: StringName) -> void:
+func _play_locomotion_animation() -> void:
+	if not _is_moving:
+		_play_animation(IDLE_ANIMATION)
+	elif _is_sprinting:
+		var sprint_animation_speed := sprint_speed / move_speed if move_speed > 0.0 else 1.0
+		_play_animation(SPRINT_ANIMATION, sprint_animation_speed)
+	else:
+		_play_animation(RUN_ANIMATION)
+
+
+func _play_animation(animation_name: StringName, playback_speed: float = 1.0) -> void:
+	animation_player.speed_scale = playback_speed
 	if _current_animation == animation_name and animation_player.is_playing():
 		return
 	_current_animation = animation_name
@@ -202,6 +230,8 @@ func _on_animation_finished(animation_name: StringName) -> void:
 			_play_animation(JUMP_IDLE_ANIMATION)
 	elif animation_name == JUMP_LAND_ANIMATION:
 		_is_landing = false
-		_play_animation(RUN_ANIMATION if _is_moving else IDLE_ANIMATION)
+		_play_locomotion_animation()
+	elif animation_name == RUN_ANIMATION:
+		_play_locomotion_animation()
 	else:
 		_play_animation(_current_animation)
