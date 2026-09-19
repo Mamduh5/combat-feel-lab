@@ -10,12 +10,10 @@
 [sub_resource type="SphereShape3D" id="SphereShape3D_enemy_fist"]
 radius = 0.28
 
-[node name="TrainingDummy" type="Node3D" unique_id=2065618547]
+[node name="TrainingDummy" type="CharacterBody3D" unique_id=2065618547]
 script = ExtResource("1_b05k5")
 
-[node name="StaticBody3D" type="StaticBody3D" parent="." unique_id=1282238548]
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D" unique_id=726461548]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=726461548]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 shape = SubResource("CylinderShape3D_c4shs")
 
