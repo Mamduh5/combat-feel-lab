@@ -2,16 +2,34 @@ extends Node3D
 
 const IDLE_ANIMATION := &"Idle_A"
 const HIT_REACTION_ANIMATION := &"Hit_A"
-const ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium/Rig_Medium_General.glb")
+const ENEMY_ATTACK_ANIMATION := &"Unarmed_Melee_Attack_Punch_A"
+const GENERAL_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium/Rig_Medium_General.glb")
+const ATTACK_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium/Rig_Medium_CombatMelee.glb")
 
 @export var max_health: int = 100
+@export var attack_range: float = 2.0
+@export var attack_cooldown: float = 1.5
+@export var telegraph_duration: float = 0.45
+@export var attack_damage: int = 20
+@export_range(0.0, 1.0, 0.01) var enemy_hit_start: float = 0.30
+@export_range(0.0, 1.0, 0.01) var enemy_hit_end: float = 0.60
 @export_range(0.06, 0.10, 0.01) var hit_flash_duration: float = 0.08
 
 @onready var health_label: Label3D = $Label3D
+@onready var telegraph_label: Label3D = $TelegraphLabel
 @onready var target_character: Node3D = $VisualRoot/TargetCharacter
 @onready var target_animation_player: AnimationPlayer = $VisualRoot/TargetAnimationPlayer
+@onready var enemy_attack_hitbox: Area3D = $VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyHandAttachment/EnemyAttackHitbox
+@onready var player: CharacterBody3D = $"../Player"
 
 var current_health: int
+var _enemy_attack_duration := 0.0
+var _enemy_attack_elapsed := 0.0
+var _telegraph_elapsed := 0.0
+var _cooldown_remaining := 0.0
+var _is_telegraphing := false
+var _is_enemy_attacking := false
+var _enemy_hit_target_ids: Dictionary = {}
 var _flash_material: StandardMaterial3D
 var _flash_meshes: Array[MeshInstance3D] = []
 var _original_material_overrides: Dictionary = {}
@@ -27,6 +45,27 @@ func _ready() -> void:
 	_play_idle()
 
 
+func _physics_process(delta: float) -> void:
+	if _cooldown_remaining > 0.0:
+		_cooldown_remaining = maxf(_cooldown_remaining - delta, 0.0)
+
+	if _is_enemy_attacking:
+		_process_enemy_attack_hits(delta)
+		return
+
+	if _is_telegraphing:
+		if not _player_can_be_attacked() or not _is_player_in_range():
+			_cancel_telegraph()
+			return
+		_telegraph_elapsed += delta
+		if _telegraph_elapsed >= telegraph_duration:
+			_start_enemy_attack()
+		return
+
+	if _cooldown_remaining <= 0.0 and _player_can_be_attacked() and _is_player_in_range():
+		_start_telegraph()
+
+
 func take_damage(amount: int) -> bool:
 	if amount <= 0 or current_health <= 0:
 		return false
@@ -37,18 +76,27 @@ func take_damage(amount: int) -> bool:
 		return false
 
 	_update_health_label()
-	target_animation_player.play(HIT_REACTION_ANIMATION)
+	if not _is_telegraphing and not _is_enemy_attacking:
+		target_animation_player.play(HIT_REACTION_ANIMATION)
 	_trigger_hit_flash()
 	return true
 
 
 func _setup_target_animations() -> void:
-	var animation_source := ANIMATION_SOURCE.instantiate()
-	var source_player := animation_source.find_child("AnimationPlayer", true, false) as AnimationPlayer
-	var source_library := source_player.get_animation_library(&"")
-	var target_library := source_library.duplicate(true) as AnimationLibrary
+	var general_source := GENERAL_ANIMATION_SOURCE.instantiate()
+	var general_player := general_source.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	var general_library := general_player.get_animation_library(&"")
+	var target_library := general_library.duplicate(true) as AnimationLibrary
+
+	var attack_source := ATTACK_ANIMATION_SOURCE.instantiate()
+	var attack_player := attack_source.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	var attack_animation := attack_player.get_animation("Melee_Unarmed_Attack_Punch_A").duplicate(true) as Animation
+	target_library.add_animation(ENEMY_ATTACK_ANIMATION, attack_animation)
+	_enemy_attack_duration = attack_animation.length
+
 	target_animation_player.add_animation_library(&"", target_library)
-	animation_source.free()
+	general_source.free()
+	attack_source.free()
 
 
 func _setup_hit_flash() -> void:
@@ -63,6 +111,64 @@ func _setup_hit_flash() -> void:
 		var mesh := child as MeshInstance3D
 		_flash_meshes.append(mesh)
 		_original_material_overrides[mesh] = mesh.material_override
+
+
+func _start_telegraph() -> void:
+	_is_telegraphing = true
+	_telegraph_elapsed = 0.0
+	telegraph_label.visible = true
+	_play_idle()
+
+
+func _cancel_telegraph() -> void:
+	_is_telegraphing = false
+	_telegraph_elapsed = 0.0
+	telegraph_label.visible = false
+	_play_idle()
+
+
+func _start_enemy_attack() -> void:
+	_is_telegraphing = false
+	telegraph_label.visible = false
+	_is_enemy_attacking = true
+	_enemy_attack_elapsed = 0.0
+	_enemy_hit_target_ids.clear()
+	target_animation_player.play(ENEMY_ATTACK_ANIMATION)
+
+
+func _finish_enemy_attack() -> void:
+	_is_enemy_attacking = false
+	_enemy_attack_elapsed = 0.0
+	_cooldown_remaining = attack_cooldown
+	_play_idle()
+
+
+func _process_enemy_attack_hits(delta: float) -> void:
+	_enemy_attack_elapsed += delta
+	if _enemy_attack_duration <= 0.0:
+		return
+
+	var normalized_progress := _enemy_attack_elapsed / _enemy_attack_duration
+	if normalized_progress < enemy_hit_start or normalized_progress > enemy_hit_end:
+		return
+
+	for hurtbox in enemy_attack_hitbox.get_overlapping_areas():
+		var target := hurtbox.get_parent()
+		if target != player or not target.has_method("take_damage"):
+			continue
+		var target_id := target.get_instance_id()
+		if _enemy_hit_target_ids.has(target_id):
+			continue
+		_enemy_hit_target_ids[target_id] = true
+		target.take_damage(attack_damage)
+
+
+func _player_can_be_attacked() -> bool:
+	return is_instance_valid(player) and int(player.get("current_health")) > 0
+
+
+func _is_player_in_range() -> bool:
+	return global_position.distance_to(player.global_position) <= attack_range
 
 
 func _trigger_hit_flash() -> void:
@@ -84,7 +190,11 @@ func _play_idle() -> void:
 
 
 func _on_target_animation_finished(animation_name: StringName) -> void:
-	if animation_name == HIT_REACTION_ANIMATION or animation_name == IDLE_ANIMATION:
+	if animation_name == ENEMY_ATTACK_ANIMATION and _is_enemy_attacking:
+		_finish_enemy_attack()
+	elif animation_name == HIT_REACTION_ANIMATION:
+		_play_idle()
+	elif animation_name == IDLE_ANIMATION and not _is_enemy_attacking:
 		_play_idle()
 
 

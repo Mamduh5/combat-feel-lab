@@ -7,6 +7,9 @@
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_rt15g"]
 
+[sub_resource type="SphereShape3D" id="SphereShape3D_enemy_fist"]
+radius = 0.28
+
 [node name="TrainingDummy" type="Node3D" unique_id=2065618547]
 script = ExtResource("1_b05k5")
 
@@ -31,6 +34,17 @@ shape = SubResource("CylinderShape3D_rt15g")
 [node name="TargetAnimationPlayer" type="AnimationPlayer" parent="VisualRoot"]
 root_node = NodePath("../TargetCharacter")
 
+[node name="EnemyHandAttachment" type="BoneAttachment3D" parent="VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D"]
+bone_name = "hand.r"
+
+[node name="EnemyAttackHitbox" type="Area3D" parent="VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyHandAttachment"]
+collision_layer = 0
+collision_mask = 4
+monitorable = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="VisualRoot/TargetCharacter/Rig_Medium/Skeleton3D/EnemyHandAttachment/EnemyAttackHitbox"]
+shape = SubResource("SphereShape3D_enemy_fist")
+
 [node name="Label3D" type="Label3D" parent="." unique_id=1385854300]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.35, 0)
 billboard = 1
@@ -38,3 +52,15 @@ no_depth_test = true
 text = "100 HP"
 font_size = 48
 outline_size = 8
+
+[node name="TelegraphLabel" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.8, 0)
+visible = false
+modulate = Color(1, 0.55, 0.05, 1)
+billboard = 1
+no_depth_test = true
+text = "!"
+font_size = 64
+outline_size = 10
+
+[editable path="VisualRoot/TargetCharacter"]

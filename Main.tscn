@@ -16,6 +16,16 @@ size = Vector3(48.313538, 0.2, 39.352234)
 [node name="TrainingDummy" parent="." instance=ExtResource("2_training_dummy")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -3)
 
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="PlayerHPLabel" type="Label" parent="HUD"]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 240.0
+offset_bottom = 60.0
+text = "Player HP: 100"
+theme_override_font_sizes/font_size = 24
+
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1484732173]
 transform = Transform3D(0.81915206, 0.4055798, -0.4055798, 0, 0.70710677, 0.70710677, 0.57357645, -0.579228, 0.579228, 0, 0, 0)
 light_energy = 1.5

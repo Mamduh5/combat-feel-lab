@@ -28,6 +28,8 @@ const MAX_COMBO_STAGE := 3
 @export_range(0.0, 1.0, 0.01) var combo_queue_start: float = 0.40
 @export_range(0.0, 1.0, 0.01) var combo_queue_end: float = 0.90
 @export var attack_damage: int = 25
+@export var max_health: int = 100
+@export_range(0.06, 0.10, 0.01) var player_hit_flash_duration: float = 0.08
 @export_range(0.0, 0.20, 0.01) var hit_stop_duration: float = 0.05
 @export_range(0.0, 1.0, 0.01) var attack_hit_start: float = 0.25
 @export_range(0.0, 1.0, 0.01) var attack_hit_end: float = 0.75
@@ -42,7 +44,13 @@ const MAX_COMBO_STAGE := 3
 @onready var spring_arm: SpringArm3D = $CameraPivot/SpringArm3D
 @onready var camera: Camera3D = $CameraPivot/SpringArm3D/Camera3D
 @onready var sword_hitbox: Area3D = get_node("Knight/Rig/Skeleton3D/handslot_r/1H_Sword/SwordHitbox")
+@onready var health_label: Label = get_node_or_null("../HUD/PlayerHPLabel") as Label
 
+var current_health: int
+var _player_flash_material: StandardMaterial3D
+var _player_flash_meshes: Array[MeshInstance3D] = []
+var _player_original_material_overrides: Dictionary = {}
+var _player_flash_generation := 0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _is_moving := false
 var _is_sprinting := false
@@ -66,12 +74,62 @@ var _hit_stop_generation := 0
 
 
 func _ready() -> void:
+	current_health = max_health
+	_update_health_label()
+	_setup_player_hit_flash()
 	spring_arm.spring_length = spring_arm_distance
 	camera_pivot.rotation.x = deg_to_rad(-10.0)
 	animation_player.animation_finished.connect(_on_animation_finished)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	_ignore_next_mouse_motion = true
 	_play_animation(IDLE_ANIMATION)
+
+
+func take_damage(amount: int) -> bool:
+	if amount <= 0 or current_health <= 0:
+		return false
+
+	var previous_health := current_health
+	current_health = clampi(current_health - amount, 0, max_health)
+	if current_health == previous_health:
+		return false
+
+	_update_health_label()
+	_trigger_player_hit_flash()
+	return true
+
+
+func _setup_player_hit_flash() -> void:
+	_player_flash_material = StandardMaterial3D.new()
+	_player_flash_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_player_flash_material.albedo_color = Color(1.0, 0.25, 0.2)
+	_player_flash_material.emission_enabled = true
+	_player_flash_material.emission = Color(1.0, 0.08, 0.04)
+	_player_flash_material.emission_energy_multiplier = 2.0
+
+	for child in knight.find_children("*", "MeshInstance3D", true, false):
+		var mesh := child as MeshInstance3D
+		_player_flash_meshes.append(mesh)
+		_player_original_material_overrides[mesh] = mesh.material_override
+
+
+func _trigger_player_hit_flash() -> void:
+	_player_flash_generation += 1
+	var generation := _player_flash_generation
+	for mesh in _player_flash_meshes:
+		mesh.material_override = _player_flash_material
+
+	await get_tree().create_timer(player_hit_flash_duration, true, false, true).timeout
+	if generation != _player_flash_generation:
+		return
+	for mesh in _player_flash_meshes:
+		if is_instance_valid(mesh):
+			mesh.material_override = _player_original_material_overrides[mesh]
+
+
+func _update_health_label() -> void:
+	if health_label != null:
+		health_label.text = "Player HP: %d" % current_health
 
 
 func _unhandled_input(event: InputEvent) -> void:
