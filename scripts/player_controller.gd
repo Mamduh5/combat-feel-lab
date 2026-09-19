@@ -32,6 +32,12 @@ const MAX_COMBO_STAGE := 3
 @export_range(0.0, 1.0, 0.01) var combo_queue_end: float = 0.90
 @export var attack_damage: int = 25
 @export var max_health: int = 100
+@export var max_stamina: float = 100.0
+@export var stamina_regen_rate: float = 30.0
+@export var stamina_regen_delay: float = 0.75
+@export var sprint_stamina_drain: float = 18.0
+@export var dash_stamina_cost: float = 25.0
+@export var block_hit_stamina_cost: float = 20.0
 @export var respawn_delay: float = 2.0
 @export_range(0.0, 360.0, 1.0) var block_angle_degrees: float = 120.0
 @export_range(0.06, 0.10, 0.01) var player_hit_flash_duration: float = 0.08
@@ -50,8 +56,11 @@ const MAX_COMBO_STAGE := 3
 @onready var camera: Camera3D = $CameraPivot/SpringArm3D/Camera3D
 @onready var sword_hitbox: Area3D = get_node("Knight/Rig/Skeleton3D/handslot_r/1H_Sword/SwordHitbox")
 @onready var health_label: Label = get_node_or_null("../HUD/PlayerHPLabel") as Label
+@onready var stamina_label: Label = get_node_or_null("../HUD/StaminaLabel") as Label
+@onready var stamina_bar: ProgressBar = get_node_or_null("../HUD/StaminaBar") as ProgressBar
 
 var current_health: int
+var current_stamina: float
 var _player_flash_material: StandardMaterial3D
 var _player_flash_meshes: Array[MeshInstance3D] = []
 var _player_original_material_overrides: Dictionary = {}
@@ -66,6 +75,9 @@ var _is_attacking := false
 var _is_blocking := false
 var _is_block_hit_reacting := false
 var _block_press_requires_release := false
+var _block_stamina_lock := false
+var _sprint_stamina_lock := false
+var _stamina_regen_delay_remaining := 0.0
 var _is_dead := false
 var _death_animation_finished := false
 var _death_started_at_msec := 0
@@ -88,7 +100,9 @@ var _hit_stop_generation := 0
 func _ready() -> void:
 	_initial_global_transform = global_transform
 	current_health = max_health
+	current_stamina = max_stamina
 	_update_health_label()
+	_update_stamina_hud()
 	_setup_player_hit_flash()
 	spring_arm.spring_length = spring_arm_distance
 	camera_pivot.rotation.x = deg_to_rad(-10.0)
@@ -102,8 +116,15 @@ func take_damage(amount: int, source_position = null) -> bool:
 	if amount <= 0 or current_health <= 0 or _is_dead:
 		return false
 	if _can_block_damage(source_position):
-		_trigger_block_hit()
-		return false
+		if current_stamina >= block_hit_stamina_cost:
+			_spend_stamina(block_hit_stamina_cost)
+			if current_stamina <= 0.0:
+				_end_block_from_stamina_exhaustion()
+			_trigger_block_hit()
+			return false
+
+		_spend_stamina(current_stamina)
+		_end_block_from_stamina_exhaustion()
 
 	var previous_health := current_health
 	current_health = clampi(current_health - amount, 0, max_health)
@@ -160,8 +181,13 @@ func _try_respawn() -> void:
 	global_transform = _initial_global_transform
 	velocity = Vector3.ZERO
 	current_health = max_health
+	current_stamina = max_stamina
+	_stamina_regen_delay_remaining = 0.0
+	_sprint_stamina_lock = false
+	_block_stamina_lock = false
 	_cancel_combat_and_movement()
 	_update_health_label()
+	_update_stamina_hud()
 	_is_dead = false
 	_death_animation_finished = false
 	_play_animation(IDLE_ANIMATION)
@@ -223,6 +249,36 @@ func _update_health_label() -> void:
 		health_label.text = "Player HP: %d" % current_health
 
 
+func _update_stamina_hud() -> void:
+	current_stamina = clampf(current_stamina, 0.0, max_stamina)
+	if stamina_bar != null:
+		stamina_bar.max_value = max_stamina
+		stamina_bar.value = current_stamina
+	if stamina_label != null:
+		stamina_label.text = "Stamina: %d / %d" % [roundi(current_stamina), roundi(max_stamina)]
+
+
+func _spend_stamina(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	current_stamina = clampf(current_stamina - amount, 0.0, max_stamina)
+	_stamina_regen_delay_remaining = stamina_regen_delay
+	_update_stamina_hud()
+
+
+func _process_stamina(delta: float) -> void:
+	if _is_dead:
+		return
+	if _stamina_regen_delay_remaining > 0.0:
+		_stamina_regen_delay_remaining = maxf(_stamina_regen_delay_remaining - delta, 0.0)
+		return
+	if _is_sprinting or _is_dashing or _is_blocking:
+		return
+	if current_stamina < max_stamina:
+		current_stamina = minf(current_stamina + stamina_regen_rate * delta, max_stamina)
+		_update_stamina_hud()
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -264,6 +320,9 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		_try_respawn()
 		return
+
+	if not Input.is_action_pressed("sprint"):
+		_sprint_stamina_lock = false
 
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	var camera_forward := -camera.global_transform.basis.z
@@ -308,6 +367,8 @@ func _physics_process(delta: float) -> void:
 		var sprinting_now := (
 			move_direction != Vector3.ZERO
 			and Input.is_action_pressed("sprint")
+			and current_stamina > 0.0
+			and not _sprint_stamina_lock
 			and was_on_floor
 			and not _is_jumping
 		)
@@ -318,6 +379,12 @@ func _physics_process(delta: float) -> void:
 		var target_velocity := move_direction * target_speed
 		var change_rate := acceleration if move_direction != Vector3.ZERO else deceleration
 		horizontal_velocity = horizontal_velocity.move_toward(target_velocity, change_rate * delta)
+		if sprinting_now:
+			_spend_stamina(sprint_stamina_drain * delta)
+			if current_stamina <= 0.0:
+				sprinting_now = false
+				_sprint_stamina_lock = true
+				horizontal_velocity = horizontal_velocity.limit_length(move_speed)
 		velocity.x = horizontal_velocity.x
 		velocity.z = horizontal_velocity.z
 
@@ -361,9 +428,13 @@ func _physics_process(delta: float) -> void:
 		_is_landing = true
 		_play_animation(JUMP_LAND_ANIMATION)
 
+	_process_stamina(delta)
+
 
 func _update_block_state(was_on_floor: bool) -> void:
 	var block_held := Input.is_action_pressed("block")
+	if not block_held and current_stamina > 0.0:
+		_block_stamina_lock = false
 	if _is_blocking and not block_held:
 		_stop_blocking()
 	elif not _is_blocking and block_held and _can_start_block(was_on_floor):
@@ -375,6 +446,8 @@ func _can_start_block(was_on_floor: bool) -> bool:
 		not _is_dead
 		and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 		and not _block_press_requires_release
+		and not _block_stamina_lock
+		and current_stamina > 0.0
 		and was_on_floor
 		and not _is_jumping
 		and not _is_landing
@@ -398,10 +471,17 @@ func _stop_blocking() -> void:
 	_resume_locomotion_from_input()
 
 
+func _end_block_from_stamina_exhaustion() -> void:
+	_is_blocking = false
+	_block_stamina_lock = true
+	if not _is_block_hit_reacting:
+		_resume_locomotion_from_input()
+
+
 func _resume_locomotion_from_input() -> void:
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
-	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and is_on_floor()
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not _sprint_stamina_lock and is_on_floor()
 	_play_locomotion_animation()
 
 
@@ -490,7 +570,7 @@ func _finish_attack() -> void:
 	_attack_elapsed = 0.0
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
-	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and is_on_floor()
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not _sprint_stamina_lock and is_on_floor()
 	_play_locomotion_animation()
 
 
@@ -539,6 +619,8 @@ func _exit_tree() -> void:
 func _start_dash(move_direction: Vector3) -> void:
 	if _is_dead or not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
 		return
+	if current_stamina < dash_stamina_cost:
+		return
 
 	var facing_direction := knight.global_transform.basis.z
 	facing_direction.y = 0.0
@@ -557,6 +639,7 @@ func _start_dash(move_direction: Vector3) -> void:
 	if dash_duration <= 0.0:
 		return
 
+	_spend_stamina(dash_stamina_cost)
 	_is_dashing = true
 	_is_landing = false
 	_is_moving = false
@@ -576,7 +659,7 @@ func _finish_dash() -> void:
 
 	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	_is_moving = input_vector != Vector2.ZERO
-	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and is_on_floor()
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and current_stamina > 0.0 and not _sprint_stamina_lock and is_on_floor()
 	_play_locomotion_animation()
 
 

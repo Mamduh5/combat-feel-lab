@@ -26,6 +26,22 @@ offset_bottom = 60.0
 text = "Player HP: 100"
 theme_override_font_sizes/font_size = 24
 
+[node name="StaminaLabel" type="Label" parent="HUD"]
+offset_left = 20.0
+offset_top = 64.0
+offset_right = 270.0
+offset_bottom = 88.0
+text = "Stamina: 100 / 100"
+theme_override_font_sizes/font_size = 18
+
+[node name="StaminaBar" type="ProgressBar" parent="HUD"]
+offset_left = 20.0
+offset_top = 92.0
+offset_right = 270.0
+offset_bottom = 116.0
+value = 100.0
+show_percentage = false
+
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1484732173]
 transform = Transform3D(0.81915206, 0.4055798, -0.4055798, 0, 0.70710677, 0.70710677, 0.57357645, -0.579228, 0.579228, 0, 0, 0)
 light_energy = 1.5
