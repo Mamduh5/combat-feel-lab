@@ -13,6 +13,8 @@ const DASH_RIGHT_ANIMATION := &"Dodge_Right"
 const COMBO_1_ANIMATION := &"1H_Melee_Attack_Slice_Diagonal"
 const COMBO_2_ANIMATION := &"1H_Melee_Attack_Slice_Horizontal"
 const COMBO_3_ANIMATION := &"1H_Melee_Attack_Stab"
+const BLOCKING_ANIMATION := &"Blocking"
+const BLOCK_HIT_ANIMATION := &"Block_Hit"
 const MAX_COMBO_STAGE := 3
 
 @export var move_speed: float = 4.0
@@ -29,6 +31,7 @@ const MAX_COMBO_STAGE := 3
 @export_range(0.0, 1.0, 0.01) var combo_queue_end: float = 0.90
 @export var attack_damage: int = 25
 @export var max_health: int = 100
+@export_range(0.0, 360.0, 1.0) var block_angle_degrees: float = 120.0
 @export_range(0.06, 0.10, 0.01) var player_hit_flash_duration: float = 0.08
 @export_range(0.0, 0.20, 0.01) var hit_stop_duration: float = 0.05
 @export_range(0.0, 1.0, 0.01) var attack_hit_start: float = 0.25
@@ -58,6 +61,9 @@ var _is_jumping := false
 var _is_landing := false
 var _is_dashing := false
 var _is_attacking := false
+var _is_blocking := false
+var _is_block_hit_reacting := false
+var _block_press_requires_release := false
 var _dash_direction := Vector3.ZERO
 var _dash_speed := 0.0
 var _dash_time_remaining := 0.0
@@ -85,8 +91,11 @@ func _ready() -> void:
 	_play_animation(IDLE_ANIMATION)
 
 
-func take_damage(amount: int) -> bool:
+func take_damage(amount: int, source_position = null) -> bool:
 	if amount <= 0 or current_health <= 0:
+		return false
+	if _can_block_damage(source_position):
+		_trigger_block_hit()
 		return false
 
 	var previous_health := current_health
@@ -97,6 +106,29 @@ func take_damage(amount: int) -> bool:
 	_update_health_label()
 	_trigger_player_hit_flash()
 	return true
+
+
+func _can_block_damage(source_position) -> bool:
+	if not _is_blocking or source_position == null:
+		return false
+
+	var source_direction: Vector3 = source_position - global_position
+	source_direction.y = 0.0
+	if source_direction.is_zero_approx():
+		return false
+
+	var forward := knight.global_transform.basis.z
+	forward.y = 0.0
+	if forward.is_zero_approx():
+		return false
+
+	var half_angle_radians := deg_to_rad(block_angle_degrees * 0.5)
+	return forward.normalized().dot(source_direction.normalized()) >= cos(half_angle_radians)
+
+
+func _trigger_block_hit() -> void:
+	_is_block_hit_reacting = true
+	_play_animation(BLOCK_HIT_ANIMATION)
 
 
 func _setup_player_hit_flash() -> void:
@@ -135,6 +167,11 @@ func _update_health_label() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+			_block_press_requires_release = true
+		elif not event.pressed:
+			_block_press_requires_release = false
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -174,7 +211,9 @@ func _physics_process(delta: float) -> void:
 	elif velocity.y < 0.0:
 		velocity.y = -0.1
 
-	if Input.is_action_just_pressed("dash") and was_on_floor and not _is_jumping and not _is_dashing and not _is_attacking:
+	_update_block_state(was_on_floor)
+
+	if Input.is_action_just_pressed("dash") and was_on_floor and not _is_jumping and not _is_dashing and not _is_attacking and not _is_blocking and not _is_block_hit_reacting:
 		_start_dash(move_direction)
 
 	if _is_dashing:
@@ -184,6 +223,11 @@ func _physics_process(delta: float) -> void:
 		velocity.z = dash_velocity.z
 		_dash_time_remaining -= dash_step
 	elif _is_attacking:
+		var horizontal_velocity := Vector3(velocity.x, 0.0, velocity.z)
+		horizontal_velocity = horizontal_velocity.move_toward(Vector3.ZERO, deceleration * delta)
+		velocity.x = horizontal_velocity.x
+		velocity.z = horizontal_velocity.z
+	elif _is_blocking or _is_block_hit_reacting:
 		var horizontal_velocity := Vector3(velocity.x, 0.0, velocity.z)
 		horizontal_velocity = horizontal_velocity.move_toward(Vector3.ZERO, deceleration * delta)
 		velocity.x = horizontal_velocity.x
@@ -246,7 +290,51 @@ func _physics_process(delta: float) -> void:
 		_play_animation(JUMP_LAND_ANIMATION)
 
 
+func _update_block_state(was_on_floor: bool) -> void:
+	var block_held := Input.is_action_pressed("block")
+	if _is_blocking and not block_held:
+		_stop_blocking()
+	elif not _is_blocking and block_held and _can_start_block(was_on_floor):
+		_start_blocking()
+
+
+func _can_start_block(was_on_floor: bool) -> bool:
+	return (
+		Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+		and not _block_press_requires_release
+		and was_on_floor
+		and not _is_jumping
+		and not _is_landing
+		and not _is_attacking
+		and not _is_dashing
+		and not _is_block_hit_reacting
+	)
+
+
+func _start_blocking() -> void:
+	_is_blocking = true
+	_is_moving = false
+	_is_sprinting = false
+	_play_animation(BLOCKING_ANIMATION)
+
+
+func _stop_blocking() -> void:
+	_is_blocking = false
+	if _is_block_hit_reacting:
+		return
+	_resume_locomotion_from_input()
+
+
+func _resume_locomotion_from_input() -> void:
+	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	_is_moving = input_vector != Vector2.ZERO
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and is_on_floor()
+	_play_locomotion_animation()
+
+
 func _handle_attack_input() -> void:
+	if _is_blocking or _is_block_hit_reacting:
+		return
 	if _is_attacking:
 		_try_queue_next_combo_attack()
 	else:
@@ -266,7 +354,7 @@ func _try_queue_next_combo_attack() -> void:
 
 
 func _start_attack() -> void:
-	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking:
+	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
 		return
 	_start_combo_attack(1)
 
@@ -374,7 +462,7 @@ func _exit_tree() -> void:
 
 
 func _start_dash(move_direction: Vector3) -> void:
-	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking:
+	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking or _is_blocking or _is_block_hit_reacting:
 		return
 
 	var facing_direction := knight.global_transform.basis.z
@@ -439,7 +527,16 @@ func _on_animation_finished(animation_name: StringName) -> void:
 	if animation_name != _current_animation:
 		return
 
-	if _is_attacking and animation_name == _get_combo_animation(_combo_stage):
+	if animation_name == BLOCK_HIT_ANIMATION and _is_block_hit_reacting:
+		_is_block_hit_reacting = false
+		if _is_blocking and Input.is_action_pressed("block"):
+			_play_animation(BLOCKING_ANIMATION)
+		else:
+			_is_blocking = false
+			_resume_locomotion_from_input()
+	elif _is_blocking and animation_name == BLOCKING_ANIMATION:
+		_play_animation(BLOCKING_ANIMATION)
+	elif _is_attacking and animation_name == _get_combo_animation(_combo_stage):
 		if _combo_next_queued and _combo_stage < MAX_COMBO_STAGE:
 			var next_stage := _combo_stage + 1
 			if not _start_combo_attack(next_stage):

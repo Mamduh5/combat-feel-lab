@@ -160,7 +160,7 @@ func _process_enemy_attack_hits(delta: float) -> void:
 		if _enemy_hit_target_ids.has(target_id):
 			continue
 		_enemy_hit_target_ids[target_id] = true
-		target.take_damage(attack_damage)
+		target.take_damage(attack_damage, enemy_attack_hitbox.global_position)
 
 
 func _player_can_be_attacked() -> bool:
