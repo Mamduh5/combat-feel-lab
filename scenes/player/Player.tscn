@@ -13,6 +13,21 @@ script = ExtResource("1_gfjak")
 [node name="Knight" type="Node3D" parent="." unique_id=235979211 instance=ExtResource("1_wr5hl")]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0, 0)
 
+[node name="1H_Sword_Offhand" parent="Knight/Rig/Skeleton3D/handslot_l" index="0"]
+visible = false
+
+[node name="Badge_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" index="1"]
+visible = false
+
+[node name="Rectangle_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" index="2"]
+visible = false
+
+[node name="Spike_Shield" parent="Knight/Rig/Skeleton3D/handslot_l" index="4"]
+visible = false
+
+[node name="2H_Sword" parent="Knight/Rig/Skeleton3D/handslot_r" index="1"]
+visible = false
+
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=973438353]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 shape = SubResource("CapsuleShape3D_4kuee")
@@ -26,3 +41,5 @@ margin = 0.1
 
 [node name="Camera3D" type="Camera3D" parent="CameraPivot/SpringArm3D" unique_id=587799182]
 current = true
+
+[editable path="Knight"]

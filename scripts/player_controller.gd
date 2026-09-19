@@ -10,6 +10,7 @@ const DASH_FORWARD_ANIMATION := &"Dodge_Forward"
 const DASH_BACKWARD_ANIMATION := &"Dodge_Backward"
 const DASH_LEFT_ANIMATION := &"Dodge_Left"
 const DASH_RIGHT_ANIMATION := &"Dodge_Right"
+const ATTACK_ANIMATION := &"1H_Melee_Attack_Slice_Diagonal"
 
 @export var move_speed: float = 4.0
 @export var sprint_speed: float = 7.5
@@ -18,6 +19,7 @@ const DASH_RIGHT_ANIMATION := &"Dodge_Right"
 @export var deceleration: float = 22.0
 @export var rotation_speed: float = 10.0
 @export var dash_distance: float = 4.5
+@export var attack_duration: float = 0.25
 @export var mouse_sensitivity: float = 0.0025
 @export_range(-89.0, 0.0, 0.5) var minimum_camera_pitch: float = -55.0
 @export_range(0.0, 89.0, 0.5) var maximum_camera_pitch: float = 35.0
@@ -35,6 +37,7 @@ var _is_sprinting := false
 var _is_jumping := false
 var _is_landing := false
 var _is_dashing := false
+var _is_attacking := false
 var _dash_direction := Vector3.ZERO
 var _dash_speed := 0.0
 var _dash_time_remaining := 0.0
@@ -55,8 +58,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		_ignore_next_mouse_motion = true
+		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+			_ignore_next_mouse_motion = true
+		elif event.is_action_pressed("attack"):
+			_start_attack()
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		if _ignore_next_mouse_motion:
 			_ignore_next_mouse_motion = false
@@ -90,7 +96,7 @@ func _physics_process(delta: float) -> void:
 	elif velocity.y < 0.0:
 		velocity.y = -0.1
 
-	if Input.is_action_just_pressed("dash") and was_on_floor and not _is_jumping and not _is_dashing:
+	if Input.is_action_just_pressed("dash") and was_on_floor and not _is_jumping and not _is_dashing and not _is_attacking:
 		_start_dash(move_direction)
 
 	if _is_dashing:
@@ -99,6 +105,11 @@ func _physics_process(delta: float) -> void:
 		velocity.x = dash_velocity.x
 		velocity.z = dash_velocity.z
 		_dash_time_remaining -= dash_step
+	elif _is_attacking:
+		var horizontal_velocity := Vector3(velocity.x, 0.0, velocity.z)
+		horizontal_velocity = horizontal_velocity.move_toward(Vector3.ZERO, deceleration * delta)
+		velocity.x = horizontal_velocity.x
+		velocity.z = horizontal_velocity.z
 	else:
 		var sprinting_now := (
 			move_direction != Vector3.ZERO
@@ -148,14 +159,40 @@ func _physics_process(delta: float) -> void:
 	if _is_dashing and _dash_time_remaining <= 0.000001:
 		_finish_dash()
 
-	if not _is_dashing and _is_jumping and not was_on_floor and is_on_floor():
+	if not _is_dashing and not _is_attacking and _is_jumping and not was_on_floor and is_on_floor():
 		_is_jumping = false
 		_is_landing = true
 		_play_animation(JUMP_LAND_ANIMATION)
 
 
+func _start_attack() -> void:
+	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking:
+		return
+	if attack_duration <= 0.0:
+		return
+
+	var attack_animation := animation_player.get_animation(ATTACK_ANIMATION)
+	if attack_animation == null or attack_animation.length <= 0.0:
+		return
+	var attack_playback_speed := attack_animation.length / attack_duration
+
+	_is_attacking = true
+	_is_landing = false
+	_is_moving = false
+	_is_sprinting = false
+	_play_animation(ATTACK_ANIMATION, attack_playback_speed)
+
+
+func _finish_attack() -> void:
+	_is_attacking = false
+	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	_is_moving = input_vector != Vector2.ZERO
+	_is_sprinting = _is_moving and Input.is_action_pressed("sprint") and is_on_floor()
+	_play_locomotion_animation()
+
+
 func _start_dash(move_direction: Vector3) -> void:
-	if not is_on_floor() or _is_jumping or _is_dashing:
+	if not is_on_floor() or _is_jumping or _is_dashing or _is_attacking:
 		return
 
 	var facing_direction := knight.global_transform.basis.z
@@ -220,7 +257,9 @@ func _on_animation_finished(animation_name: StringName) -> void:
 	if animation_name != _current_animation:
 		return
 
-	if _is_dashing:
+	if _is_attacking and animation_name == ATTACK_ANIMATION:
+		_finish_attack()
+	elif _is_dashing:
 		_finish_dash()
 	elif animation_name == JUMP_START_ANIMATION:
 		if _is_jumping and not is_on_floor():
