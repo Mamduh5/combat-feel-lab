@@ -31,6 +31,7 @@ const ATTACK_ANIMATION_SOURCE := preload("res://assets/third_party/KayKit_Charac
 @export_range(0.0, 1.0, 0.01) var enemy_hit_start: float = 0.30
 @export_range(0.0, 1.0, 0.01) var enemy_hit_end: float = 0.60
 @export_range(0.06, 0.10, 0.01) var hit_flash_duration: float = 0.08
+@export_range(0.05, 1.0, 0.01) var hit_reaction_duration: float = 0.30
 
 @onready var health_label: Label3D = $Label3D
 @onready var telegraph_label: Label3D = $TelegraphLabel
@@ -88,7 +89,9 @@ func _physics_process(delta: float) -> void:
 		if _cooldown_remaining > 0.0:
 			_cooldown_remaining = maxf(_cooldown_remaining - delta, 0.0)
 
-		if _is_enemy_attacking:
+		if _is_hit_reacting:
+			_stop_horizontal(delta)
+		elif _is_enemy_attacking:
 			_stop_horizontal(delta)
 			_process_enemy_attack_hits(delta)
 		elif _is_telegraphing:
@@ -174,11 +177,49 @@ func take_damage(amount: int) -> bool:
 	_update_health_label()
 	if current_health <= 0:
 		_die()
-	elif not _is_telegraphing and not _is_enemy_attacking:
-		_is_hit_reacting = true
-		target_animation_player.play(HIT_REACTION_ANIMATION)
+	else:
+		_start_hit_reaction()
 	_trigger_hit_flash()
 	return true
+
+
+func _start_hit_reaction() -> void:
+	if _is_dead:
+		return
+
+	_is_telegraphing = false
+	_is_enemy_attacking = false
+	_is_hit_reacting = true
+	_telegraph_elapsed = 0.0
+	_enemy_attack_elapsed = 0.0
+	_cooldown_remaining = attack_cooldown
+	_committed_attack_forward = Vector3.ZERO
+	_selected_attack = 0
+	_enemy_hit_target_ids.clear()
+	velocity.x = 0.0
+	velocity.z = 0.0
+	telegraph_label.visible = false
+	enemy_attack_hitbox.set_deferred("monitoring", false)
+	enemy_attack_2_hitbox.set_deferred("monitoring", false)
+
+	var hit_animation := target_animation_player.get_animation(HIT_REACTION_ANIMATION)
+	var playback_speed := hit_animation.length / maxf(hit_reaction_duration, 0.001)
+	target_animation_player.stop()
+	target_animation_player.speed_scale = playback_speed
+	target_animation_player.play(HIT_REACTION_ANIMATION)
+
+
+func _finish_hit_reaction() -> void:
+	if _is_dead or not _is_hit_reacting:
+		return
+
+	_is_hit_reacting = false
+	target_animation_player.speed_scale = 1.0
+	velocity.x = 0.0
+	velocity.z = 0.0
+	enemy_attack_hitbox.set_deferred("monitoring", true)
+	enemy_attack_2_hitbox.set_deferred("monitoring", true)
+	_play_idle()
 
 
 func _die() -> void:
@@ -201,6 +242,7 @@ func _die() -> void:
 	telegraph_label.visible = false
 	enemy_attack_hitbox.set_deferred("monitoring", false)
 	enemy_attack_2_hitbox.set_deferred("monitoring", false)
+	target_animation_player.speed_scale = 1.0
 	target_animation_player.play(DEATH_ANIMATION)
 
 
@@ -234,6 +276,7 @@ func _try_respawn() -> void:
 	_selected_attack = 1
 	_enemy_hit_target_ids.clear()
 	telegraph_label.visible = false
+	target_animation_player.speed_scale = 1.0
 	body_collision.set_deferred("disabled", false)
 	hurtbox.set_deferred("monitoring", true)
 	hurtbox.set_deferred("monitorable", true)
@@ -448,12 +491,8 @@ func _on_target_animation_finished(animation_name: StringName) -> void:
 		_finish_death_animation()
 	elif _is_enemy_attacking and animation_name == _get_selected_attack_animation():
 		_finish_enemy_attack()
-	elif animation_name == HIT_REACTION_ANIMATION:
-		_is_hit_reacting = false
-		if velocity.length_squared() > 0.01:
-			_play_chase()
-		else:
-			_play_idle()
+	elif animation_name == HIT_REACTION_ANIMATION and _is_hit_reacting:
+		_finish_hit_reaction()
 	elif animation_name == IDLE_ANIMATION and not _is_enemy_attacking:
 		_play_idle()
 
